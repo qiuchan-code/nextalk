@@ -1,14 +1,26 @@
 <script setup>
-import { onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useCharacters } from '../lib/characters.js'
 
 defineProps({
   activeId: { type: String, default: '' }
 })
-const emit = defineEmits(['pick', 'create'])
+const emit = defineEmits(['pick', 'create', 'edit'])
 
 const chars = useCharacters()
-onMounted(chars.reload)
+const menuFor = ref('') // 当前展开菜单的角色 id
+onMounted(() => chars.reload())
+
+function toggleMenu(id) {
+  menuFor.value = menuFor.value === id ? '' : id
+}
+
+async function del(id) {
+  menuFor.value = ''
+  const c = chars.state.list.find((x) => x.id === id)
+  if (!confirm(`确定删掉「${c.name}」吗？它名下的会话、记忆都会一起消失。`)) return
+  await chars.removeCharacter(id)
+}
 
 // 每个角色的卡片歪向不同方向，用它的名字哈希，稳一点（不随渲染随机跳）
 function tilt(name) {
@@ -25,23 +37,28 @@ function tilt(name) {
 
       <!-- 像贴在纸上的照片墙，故意不排成整齐网格 -->
       <div class="wall">
-        <button
+        <div
           v-for="c in chars.state.list"
           :key="c.id"
-          class="photo"
-          :class="{ on: c.id === activeId }"
+          class="photo-wrap"
           :style="{ transform: `rotate(${tilt(c.name)}deg)` }"
-          @click="emit('pick', c.id)"
         >
-          <div class="polaroid">
-            <div v-if="c.avatar" class="img-holder">
-              <img :src="c.avatar" :alt="c.name" />
+          <button class="photo" :class="{ on: c.id === activeId }" @click="emit('pick', c.id)">
+            <div class="polaroid">
+              <div v-if="c.avatar" class="img-holder">
+                <img :src="c.avatar" :alt="c.name" />
+              </div>
+              <div v-else class="img-holder placeholder hand">{{ c.name.slice(0, 1) }}</div>
+              <span class="tape"></span>
             </div>
-            <div v-else class="img-holder placeholder hand">{{ c.name.slice(0, 1) }}</div>
-            <span class="tape"></span>
+            <span class="photo-name hand">{{ c.name }}</span>
+          </button>
+          <button class="more hand" @click.stop="toggleMenu(c.id)">⋯</button>
+          <div v-if="menuFor === c.id" class="card-menu paper-card">
+            <button class="menu-item hand" @click="emit('edit', c.id); menuFor = ''">改它</button>
+            <button class="menu-item danger hand" @click="del(c.id)">删掉</button>
           </div>
-          <span class="photo-name hand">{{ c.name }}</span>
-        </button>
+        </div>
       </div>
 
       <button class="btn add" @click="emit('create')">＋ 捏一个新的</button>
@@ -84,6 +101,12 @@ function tilt(name) {
   gap: 18px 14px;
 }
 
+.photo-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
 .photo {
   background: transparent;
   border: none;
@@ -96,7 +119,54 @@ function tilt(name) {
   transition: transform 0.12s;
 }
 .photo:hover {
-  transform: scale(1.03) !important;
+  transform: scale(1.03);
+}
+
+.more {
+  position: absolute;
+  top: -4px;
+  right: -8px;
+  width: 26px;
+  height: 26px;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--ink-soft);
+  background: var(--paper-card);
+  border: 1px solid var(--paper-edge);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: var(--shadow-card);
+  transform: rotate(4deg);
+  z-index: 2;
+}
+
+.card-menu {
+  position: absolute;
+  top: 20px;
+  right: -6px;
+  z-index: 3;
+  min-width: 84px;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-shadow: var(--shadow-lift);
+}
+.menu-item {
+  font-size: 14px;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  padding: 7px 10px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 2px;
+}
+.menu-item:hover {
+  background: rgba(201, 165, 90, 0.14);
+}
+.menu-item.danger {
+  color: var(--ink-red);
 }
 
 .polaroid {

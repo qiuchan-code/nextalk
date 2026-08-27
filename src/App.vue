@@ -13,6 +13,7 @@ import { get, STORES } from './lib/db.js'
 const view = ref(isConfigured() ? 'home' : 'settings')
 const activeCharacter = ref(null)
 const activeSessionId = ref('')
+const activeEditId = ref('') // 正在编辑的角色 id，空 = 新建
 // 当前角色的全部会话线，聊天气泡上方做切换
 const charSessions = ref([])
 const chars = useCharacters()
@@ -65,6 +66,16 @@ function backHome() {
   view.value = 'home'
 }
 
+function startNew() {
+  activeEditId.value = ''
+  view.value = 'create'
+}
+
+function editCharacter(id) {
+  activeEditId.value = id
+  view.value = 'create'
+}
+
 function askSettings() {
   view.value = 'settings'
 }
@@ -89,9 +100,16 @@ function askSettings() {
       v-if="view === 'home'"
       :active-id="activeCharacter?.id || ''"
       @pick="pickCharacter"
-      @create="view = 'create'"
+      @create="startNew"
+      @edit="editCharacter"
     />
-    <CharacterEdit v-else-if="view === 'create'" @save="savedCharacter" @cancel="backHome" />
+    <CharacterEdit
+      v-else-if="view === 'create'"
+      :char-id="activeEditId"
+      :key="activeEditId || 'new'"
+      @save="savedCharacter"
+      @cancel="backHome"
+    />
     <Chat
       v-else-if="view === 'chat' && activeCharacter"
       :key="activeSessionId"

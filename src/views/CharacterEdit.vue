@@ -1,19 +1,36 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useCharacters, emptyCharacter, compressAvatar } from '../lib/characters.js'
 
+const props = defineProps({
+  charId: { type: String, default: '' } // 传入就是编辑，空就是新建
+})
 const emit = defineEmits(['save', 'cancel'])
-const { saveCharacter } = useCharacters()
+const { saveCharacter, getCharacter } = useCharacters()
 
 const char = ref(emptyCharacter())
+const styleText = ref('')
+const compressBusy = ref(false)
+const loaded = ref(false)
+const isEdit = props.charId // 新建与否在 setup 里定，生命周期里不变
+
 const traitMeta = [
   { key: 'rational', name: '理性', high: '讲逻辑', low: '凭感觉' },
   { key: 'humor', name: '幽默', high: '爱贫嘴', low: '正经' },
   { key: 'empathy', name: '共情', high: '照顾情绪', low: '就事论事' },
   { key: 'proactive', name: '主动', high: '话痨', low: '被动' }
 ]
-const styleText = ref('')
-const compressBusy = ref(false)
+
+onMounted(async () => {
+  if (props.charId) {
+    const existing = await getCharacter(props.charId)
+    if (existing) {
+      char.value = existing
+      styleText.value = (existing.styleLines || []).join('\n')
+    }
+  }
+  loaded.value = true
+})
 
 function pickAvatar(e) {
   const file = e.target.files?.[0]
@@ -51,8 +68,8 @@ async function save() {
     <div class="sheet paper-card">
       <span class="tape blue"></span>
 
-      <h2 class="hand title">捏一个角色</h2>
-      <p class="note">形象、性格、说话方式，都随你。</p>
+      <h2 class="hand title">{{ isEdit ? '改改它' : '捏一个角色' }}</h2>
+      <p class="note">{{ isEdit ? '改完保存，它所有对话线都会用新的人设。' : '形象、性格、说话方式，都随你。' }}</p>
 
       <!-- 头像：拍立得 -->
       <div class="avatar-row">
@@ -129,7 +146,7 @@ async function save() {
 
       <div class="actions">
         <button class="btn" @click="back">返回</button>
-        <button class="btn primary" @click="save">保存这个角色</button>
+        <button class="btn primary" @click="save">{{ isEdit ? '保存修改' : '保存这个角色' }}</button>
       </div>
     </div>
   </div>

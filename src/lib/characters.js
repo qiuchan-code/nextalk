@@ -1,5 +1,5 @@
 import { reactive, watch } from 'vue'
-import { put, get, getAll, remove, newId, STORES } from './db.js'
+import { put, get, getAll, remove, removeMany, getByIndex, newId, STORES } from './db.js'
 
 /**
  * 角色仓库。角色是独立于会话的"永久资产"，改动一个角色，
@@ -46,7 +46,7 @@ export function useCharacters() {
   }
 
   async function removeCharacter(id) {
-    await remove(STORES.characters, id)
+    await deleteCharacter(id)
     await reload()
   }
 
@@ -55,6 +55,33 @@ export function useCharacters() {
   }
 
   return { state, reload, saveCharacter, removeCharacter, getCharacter }
+}
+
+/** 删一个角色，同时清掉它名下的会话、消息、记忆、事件，免得留孤儿数据 */
+export async function deleteCharacter(id) {
+  const sessions = await getByIndex(STORES.sessions, 'charId', id)
+  const sessionIds = sessions.map((s) => s.id)
+
+  // 该角色全部会话的消息
+  const msgIds = []
+  for (const sid of sessionIds) {
+    const msgs = await getByIndex(STORES.messages, 'sessionId', sid)
+    msgIds.push(...msgs.map((m) => m.id))
+  }
+  // 该角色全部会话的事件，和它自己的记忆
+  const evIds = []
+  for (const sid of sessionIds) {
+    const evs = await getByIndex(STORES.events, 'sessionId', sid)
+    evIds.push(...evs.map((e) => e.id))
+  }
+  const mems = await getByIndex(STORES.memories, 'charId', id)
+  const memIds = mems.map((m) => m.id)
+
+  await remove(STORES.characters, id)
+  if (sessionIds.length) await removeMany(STORES.sessions, sessionIds).catch(() => {})
+  if (msgIds.length) await removeMany(STORES.messages, msgIds).catch(() => {})
+  if (evIds.length) await removeMany(STORES.events, evIds).catch(() => {})
+  if (memIds.length) await removeMany(STORES.memories, memIds).catch(() => {})
 }
 
 /** 把上传的图片压缩成小尺寸 base64，避免一张头像撑爆 IndexedDB */
