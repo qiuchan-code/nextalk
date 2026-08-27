@@ -6,12 +6,14 @@ import Chat from './views/Chat.vue'
 import Settings from './views/Settings.vue'
 import { isConfigured } from './lib/settings.js'
 import { useCharacters } from './lib/characters.js'
-import { openSession } from './lib/sessions.js'
+import { listSessions, openSession, newSession } from './lib/sessions.js'
 import { get, STORES } from './lib/db.js'
 
 const view = ref(isConfigured() ? 'home' : 'settings')
 const activeCharacter = ref(null)
 const activeSessionId = ref('')
+// 当前角色的全部会话线，聊天气泡上方做切换
+const charSessions = ref([])
 const chars = useCharacters()
 
 const subtitle = computed(() => {
@@ -25,13 +27,30 @@ const subtitle = computed(() => {
   return '夜深了'
 })
 
+async function refreshCharSessions(charId) {
+  charSessions.value = await listSessions(charId)
+}
+
 async function pickCharacter(id) {
   const char = await get(STORES.characters, id)
   if (!char) return
   const session = await openSession(char.id)
   activeCharacter.value = char
   activeSessionId.value = session.id
+  await refreshCharSessions(char.id)
   view.value = 'chat'
+}
+
+async function switchSession(sid) {
+  if (sid === activeSessionId.value) return
+  activeSessionId.value = sid
+}
+
+async function createSession() {
+  if (!activeCharacter.value) return
+  const s = await newSession(activeCharacter.value.id)
+  await refreshCharSessions(activeCharacter.value.id)
+  activeSessionId.value = s.id
 }
 
 async function savedCharacter() {
@@ -77,7 +96,11 @@ function askSettings() {
       :key="activeSessionId"
       :character="activeCharacter"
       :session-id="activeSessionId"
+      :sessions="charSessions"
       @back="backHome"
+      @switch="switchSession"
+      @new="createSession"
+      @tail="refreshCharSessions(activeCharacter.id)"
     />
     <Settings v-else-if="view === 'settings'" @done="view = 'home'" />
   </main>

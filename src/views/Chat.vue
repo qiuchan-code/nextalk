@@ -1,32 +1,33 @@
 <script setup>
-import { ref, watch, nextTick, computed, onMounted } from 'vue'
+import { ref, nextTick, computed, onMounted } from 'vue'
 import { settings } from '../lib/settings.js'
 import { streamChat } from '../lib/client.js'
 import { buildSystemPrompt, traitsToSampling } from '../lib/prompt.js'
-import { loadMessages, saveMessage } from '../lib/sessions.js'
-import { newId } from '../lib/db.js'
+import { loadMessages, saveMessage, nextSeq } from '../lib/sessions.js'
+import { newId, removeMany, STORES } from '../lib/db.js'
 
 const props = defineProps({
   character: { type: Object, required: true },
-  sessionId: { type: String, required: true }
+  sessionId: { type: String, required: true },
+  sessions: { type: Array, default: () => [] } // 这个角色的所有会话线
 })
-const emit = defineEmits(['back'])
+const emit = defineEmits(['back', 'switch', 'new', 'tail'])
 
 const messages = ref([])
 const draft = ref('')
 const busy = ref(false)
 const errorText = ref('')
 const listEl = ref(null)
+const rewindTarget = ref(null) // 待确认的回溯点消息
 let controller = null
 
-// 采样参数由角色的性格决定（不是摆设，真的会改生成结果）
 const sampling = computed(() => traitsToSampling(props.character.traits, settings.maxTokens))
 
 onMounted(loadMsgs)
 
 async function loadMsgs() {
   const list = await loadMessages(props.sessionId)
-  // 全新会话：把角色的开场白当作第一条就位
+  // 全新会话：把角色的开场白当第一条就位
   if (list.length === 0 && props.character.greeting?.trim()) {
     const greeting = makeMsg('assistant', props.character.greeting.trim())
     greeting.system = 'greeting'
@@ -41,13 +42,12 @@ async function loadMsgs() {
 function makeMsg(role, text) {
   return {
     id: newId('msg-'),
+    seq: nextSeq(),
     sessionId: props.sessionId,
     role,
     text,
     createdAt: Date.now(),
-    parentId: messages.value.length
-      ? messages.value[messages.value.length - 1].id
-      : null,
+    parentId: messages.value.length ? messages.value[messages.value.length - 1].id : null,
     status: 'complete'
   }
 }
@@ -64,39 +64,20 @@ function tilt(id) {
   return ((n / 100) * 1.6 - 0.8).toFixed(2)
 }
 
-function stop() {
-  controller?.abort()
-  controller = null
-  busy.value = false
+// —— 发送与流式 —————————————————————————
+
+function historyPayload() {
+  return messages.value
+    .filter((m) => m.status !== 'streaming' && m.text.trim())
+    .map((m) => ({ role: m.role, content: m.text }))
 }
 
-async function send() {
-  const text = draft.value.trim()
-  if (!text || busy.value) return
-
-  errorText.value = ''
-  const userMsg = makeMsg('user', text)
-  messages.value.push(userMsg)
-  await saveMessage(userMsg)
-  draft.value = ''
-
-  const reply = makeMsg('assistant', '')
-  reply.status = 'streaming'
-  messages.value.push(reply)
-  scrollToBottom()
-
+async function streamReply(reply) {
   busy.value = true
   controller = new AbortController()
-
   let body = ''
   try {
-    // 只把完整消息发给模型；开场白标记为 greeting 的也发（让模型接着自己刚说的话演）
-    const history = messages.value
-      .filter((m) => m.status !== 'streaming' && m.text.trim())
-      .map((m) => ({ role: m.role, content: m.text }))
-
-    const msgs = [{ role: 'system', content: buildSystemPrompt(props.character) }, ...history]
-
+    const msgs = [{ role: 'system', content: buildSystemPrompt(props.character) }, ...historyPayload()]
     for await (const piece of streamChat({
       endpoint: settings.endpoint,
       apiKey: settings.apiKey,
@@ -113,22 +94,84 @@ async function send() {
     }
   } catch (err) {
     errorText.value = String(err.message || err)
-    // 一个字都没吐出来就失败了，把那条空白气泡删掉，免得留着占地方
     if (!reply.text) messages.value = messages.value.filter((m) => m !== reply)
   } finally {
     if (body) {
-      // 有内容才算一条完整回复，进历史
       reply.status = 'complete'
       await saveMessage(reply).catch(() => {})
     } else if (reply.text) {
-      // 吐了一半被中断，留半句话在界面上，但不写库
-      reply.status = 'aborted'
+      reply.status = 'aborted' // 吐一半被打断，留半句但不入库
     }
-    // 完全没内容：既不显示也不入库
     busy.value = false
     controller = null
     scrollToBottom()
   }
+  return body
+}
+
+async function send() {
+  const text = draft.value.trim()
+  if (!text || busy.value) return
+  errorText.value = ''
+  const userMsg = makeMsg('user', text)
+  messages.value.push(userMsg)
+  await saveMessage(userMsg)
+  draft.value = ''
+  const reply = makeMsg('assistant', '')
+  reply.status = 'streaming'
+  messages.value.push(reply)
+  scrollToBottom()
+  await streamReply(reply)
+  emit('tail')
+}
+
+// —— 重说 / 回溯 —————————————————————————
+
+/** 重说：把最后一条回复删掉重新生成 */
+async function retry(reply) {
+  if (busy.value) return
+  errorText.value = ''
+  const idx = messages.value.findIndex((m) => m.id === reply.id)
+  if (idx === -1) return
+  const keep = messages.value.slice(0, idx)
+  const orphans = messages.value.slice(idx).map((m) => m.id) // 这条回复和它后面的
+  messages.value = keep
+  await removeMany(STORES.messages, orphans).catch(() => {})
+  const r = makeMsg('assistant', '')
+  r.status = 'streaming'
+  messages.value.push(r)
+  scrollToBottom()
+  await streamReply(r)
+  emit('tail')
+}
+
+/** 点击某条消息，把它设成回溯点 */
+function askRewind(msg) {
+  const idx = messages.value.findIndex((m) => m.id === msg.id)
+  if (idx === -1 || idx === messages.value.length - 1) return // 最后一条没必要回溯
+  if (msg.system === 'greeting') return // 开场白不算节点
+  rewindTarget.value = msg
+}
+
+async function confirmRewind() {
+  const msg = rewindTarget.value
+  rewindTarget.value = null
+  if (!msg || busy.value) return
+  errorText.value = ''
+  const idx = messages.value.findIndex((m) => m.id === msg.id)
+  const keep = messages.value.slice(0, idx + 1)
+  const orphans = messages.value.slice(idx + 1).map((m) => m.id) // 它之后的全删
+  messages.value = keep
+  await removeMany(STORES.messages, orphans).catch(() => {})
+  scrollToBottom()
+  emit('tail')
+  // 回溯后不自动生成，等你自己继续写下一句
+}
+
+function stop() {
+  controller?.abort()
+  controller = null
+  busy.value = false
 }
 
 function onKeydown(e) {
@@ -136,6 +179,10 @@ function onKeydown(e) {
     e.preventDefault()
     send()
   }
+}
+
+function sessionLabel(s) {
+  return '会话 ' + (props.sessions.indexOf(s) + 1)
 }
 </script>
 
@@ -147,8 +194,21 @@ function onKeydown(e) {
         <img v-if="character.avatar" :src="character.avatar" class="mini" alt="" />
         <span class="hand who-name">{{ character.name }}</span>
       </div>
-      <span class="note role">{{ character.backstory ? '人设加载好' : '没写人设，随便聊' }}</span>
+      <button class="btn ghost new" @click="emit('new')">＋ 新对话</button>
     </header>
+
+    <!-- 会话切换条 -->
+    <div v-if="sessions.length > 1" class="sessionbar">
+      <button
+        v-for="s in sessions"
+        :key="s.id"
+        class="session-chip hand"
+        :class="{ on: s.id === sessionId }"
+        @click="emit('switch', s.id)"
+      >
+        {{ sessionLabel(s) }}
+      </button>
+    </div>
 
     <div ref="listEl" class="list">
       <div v-if="!messages.length" class="empty">
@@ -159,20 +219,38 @@ function onKeydown(e) {
       </div>
 
       <div
-        v-for="m in messages"
+        v-for="(m, i) in messages"
         :key="m.id"
         class="row"
         :class="m.role"
         :style="{ '--tilt': tilt(m.id) + 'deg' }"
       >
-        <div class="bubble" :class="m.role">
+        <div class="bubble" :class="{ clickable: i < messages.length - 1 && m.system !== 'greeting' }" @click="askRewind(m)">
           <span v-if="m.role === 'assistant'" class="tape mini"></span>
           <p class="text">{{ m.text }}<span v-if="m.status === 'streaming'" class="caret">▍</span></p>
           <span v-if="m.system === 'greeting'" class="hand tag">开场</span>
+
+          <!-- 最后一条它说的话：重说 -->
+          <button
+            v-if="m.role === 'assistant' && m.status === 'complete' && i === messages.length - 1"
+            class="retry hand"
+            @click.stop="retry(m)"
+          >
+            重说
+          </button>
         </div>
       </div>
 
       <p v-if="errorText" class="error hand">{{ errorText }}</p>
+    </div>
+
+    <!-- 回溯确认条 -->
+    <div v-if="rewindTarget" class="rewind-bar paper-card">
+      <span class="hand rewind-text">
+        从「{{ rewindTarget.text.slice(0, 12) || '这里' }}…」重来？之后的话都会删掉。
+      </span>
+      <button class="btn primary" @click="confirmRewind">确认</button>
+      <button class="btn" @click="rewindTarget = null">取消</button>
     </div>
 
     <div class="composer">
@@ -211,6 +289,10 @@ function onKeydown(e) {
   box-shadow: none;
   padding-left: 4px;
 }
+.btn.new {
+  margin-left: auto;
+  border: 1.5px dashed var(--ink-pencil);
+}
 .who {
   display: flex;
   align-items: center;
@@ -227,9 +309,29 @@ function onKeydown(e) {
 .who-name {
   font-size: 18px;
 }
-.role {
-  margin-left: auto;
-  font-size: 12px;
+
+.sessionbar {
+  flex: none;
+  display: flex;
+  gap: 7px;
+  padding: 8px 14px 4px;
+  overflow-x: auto;
+}
+.session-chip {
+  flex: none;
+  font-size: 13px;
+  color: var(--ink-soft);
+  background: var(--paper-card);
+  border: 1px solid var(--paper-edge);
+  border-radius: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+  box-shadow: var(--shadow-card);
+}
+.session-chip.on {
+  background: var(--paper-sticky);
+  border-color: var(--ink);
+  color: var(--ink);
 }
 
 .list {
@@ -273,6 +375,12 @@ function onKeydown(e) {
   box-shadow: var(--shadow-card);
   transform: rotate(var(--tilt));
 }
+.bubble.clickable {
+  cursor: pointer;
+}
+.bubble.clickable:hover {
+  box-shadow: var(--shadow-lift);
+}
 .bubble.user {
   background: var(--paper-sticky);
   border: 1px solid rgba(170, 145, 90, 0.3);
@@ -311,6 +419,26 @@ function onKeydown(e) {
   color: var(--ink-soft);
 }
 
+.retry {
+  position: absolute;
+  left: 50%;
+  bottom: -18px;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: var(--ink-pencil);
+  background: var(--paper-card);
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  padding: 2px 11px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.bubble:hover .retry,
+.bubble.assistant .retry {
+  opacity: 1;
+}
+
 .text {
   margin: 0;
   font-size: 15.5px;
@@ -336,6 +464,26 @@ function onKeydown(e) {
   background: rgba(194, 85, 77, 0.07);
   align-self: center;
   max-width: 560px;
+}
+
+.rewind-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 14px 6px;
+  padding: 10px 12px;
+  transform: rotate(-0.4deg);
+  border: 1.5px solid rgba(194, 85, 77, 0.45);
+}
+.rewind-text {
+  flex: 1;
+  font-size: 14px;
+  color: var(--ink-red);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer {
