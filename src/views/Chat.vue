@@ -1,11 +1,17 @@
 <script setup>
-import { ref, nextTick, computed } from 'vue'
-import { settings, isConfigured } from '../lib/settings.js'
+import { ref, watch, nextTick, computed, onMounted } from 'vue'
+import { settings } from '../lib/settings.js'
 import { streamChat } from '../lib/client.js'
+import { buildSystemPrompt, traitsToSampling } from '../lib/prompt.js'
+import { loadMessages, saveMessage } from '../lib/sessions.js'
+import { newId } from '../lib/db.js'
 
-const emit = defineEmits(['need-settings'])
+const props = defineProps({
+  character: { type: Object, required: true },
+  sessionId: { type: String, required: true }
+})
+const emit = defineEmits(['back'])
 
-// Phase 0：消息先放内存里，刷新会丢。Phase 1 接上 IndexedDB 就持久了。
 const messages = ref([])
 const draft = ref('')
 const busy = ref(false)
@@ -13,7 +19,38 @@ const errorText = ref('')
 const listEl = ref(null)
 let controller = null
 
-const ready = computed(() => isConfigured())
+// 采样参数由角色的性格决定（不是摆设，真的会改生成结果）
+const sampling = computed(() => traitsToSampling(props.character.traits, settings.maxTokens))
+
+onMounted(loadMsgs)
+
+async function loadMsgs() {
+  const list = await loadMessages(props.sessionId)
+  // 全新会话：把角色的开场白当作第一条就位
+  if (list.length === 0 && props.character.greeting?.trim()) {
+    const greeting = makeMsg('assistant', props.character.greeting.trim())
+    greeting.system = 'greeting'
+    await saveMessage(greeting)
+    messages.value = [greeting]
+  } else {
+    messages.value = list
+  }
+  scrollToBottom()
+}
+
+function makeMsg(role, text) {
+  return {
+    id: newId('msg-'),
+    sessionId: props.sessionId,
+    role,
+    text,
+    createdAt: Date.now(),
+    parentId: messages.value.length
+      ? messages.value[messages.value.length - 1].id
+      : null,
+    status: 'complete'
+  }
+}
 
 function scrollToBottom() {
   nextTick(() => {
@@ -22,7 +59,6 @@ function scrollToBottom() {
   })
 }
 
-// 卡片歪多少度由 id 决定，这样同一条消息每次渲染角度一致，不会跳来跳去
 function tilt(id) {
   const n = (id * 2654435761) % 100
   return ((n / 100) * 1.6 - 0.8).toFixed(2)
@@ -37,45 +73,58 @@ function stop() {
 async function send() {
   const text = draft.value.trim()
   if (!text || busy.value) return
-  if (!ready.value) {
-    emit('need-settings')
-    return
-  }
 
   errorText.value = ''
-  messages.value.push({ id: Date.now(), role: 'user', text })
+  const userMsg = makeMsg('user', text)
+  messages.value.push(userMsg)
+  await saveMessage(userMsg)
   draft.value = ''
 
-  const reply = { id: Date.now() + 1, role: 'assistant', text: '', streaming: true }
+  const reply = makeMsg('assistant', '')
+  reply.status = 'streaming'
   messages.value.push(reply)
   scrollToBottom()
 
   busy.value = true
   controller = new AbortController()
 
+  let body = ''
   try {
-    const payload = messages.value
-      .filter((m) => !m.streaming)
-      .slice(-settings.historyWindow)
+    // 只把完整消息发给模型；开场白标记为 greeting 的也发（让模型接着自己刚说的话演）
+    const history = messages.value
+      .filter((m) => m.status !== 'streaming' && m.text.trim())
       .map((m) => ({ role: m.role, content: m.text }))
+
+    const msgs = [{ role: 'system', content: buildSystemPrompt(props.character) }, ...history]
 
     for await (const piece of streamChat({
       endpoint: settings.endpoint,
       apiKey: settings.apiKey,
       model: settings.model,
-      messages: payload,
-      maxTokens: settings.maxTokens,
+      messages: msgs,
+      temperature: sampling.value.temperature,
+      maxTokens: sampling.value.maxTokens,
+      presencePenalty: sampling.value.presencePenalty,
       signal: controller.signal
     })) {
       reply.text += piece
+      body += piece
       scrollToBottom()
     }
   } catch (err) {
     errorText.value = String(err.message || err)
-    // 一个字都没吐出来就失败了，那条空白气泡留着没意义
+    // 一个字都没吐出来就失败了，把那条空白气泡删掉，免得留着占地方
     if (!reply.text) messages.value = messages.value.filter((m) => m !== reply)
   } finally {
-    reply.streaming = false
+    if (body) {
+      // 有内容才算一条完整回复，进历史
+      reply.status = 'complete'
+      await saveMessage(reply).catch(() => {})
+    } else if (reply.text) {
+      // 吐了一半被中断，留半句话在界面上，但不写库
+      reply.status = 'aborted'
+    }
+    // 完全没内容：既不显示也不入库
     busy.value = false
     controller = null
     scrollToBottom()
@@ -83,7 +132,6 @@ async function send() {
 }
 
 function onKeydown(e) {
-  // 回车发送，Shift+回车换行。中文输入法选字时的回车不算（isComposing）
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault()
     send()
@@ -93,13 +141,20 @@ function onKeydown(e) {
 
 <template>
   <div class="chat">
+    <header class="chat-head">
+      <button class="btn ghost" @click="emit('back')">‹ 回去</button>
+      <div class="who">
+        <img v-if="character.avatar" :src="character.avatar" class="mini" alt="" />
+        <span class="hand who-name">{{ character.name }}</span>
+      </div>
+      <span class="note role">{{ character.backstory ? '人设加载好' : '没写人设，随便聊' }}</span>
+    </header>
+
     <div ref="listEl" class="list">
       <div v-if="!messages.length" class="empty">
         <div class="empty-card paper-card">
           <span class="tape green"></span>
-          <p class="hand big">还是空白的一页</p>
-          <p class="note" v-if="ready">写点什么吧，随便聊聊也行。</p>
-          <p class="note" v-else>先去<b>设置</b>里填个 API Key，不然它张不了嘴。</p>
+          <p class="note">{{ character.greeting || '说句话，让它开个头吧。' }}</p>
         </div>
       </div>
 
@@ -112,7 +167,8 @@ function onKeydown(e) {
       >
         <div class="bubble" :class="m.role">
           <span v-if="m.role === 'assistant'" class="tape mini"></span>
-          <p class="text">{{ m.text }}<span v-if="m.streaming" class="caret">▍</span></p>
+          <p class="text">{{ m.text }}<span v-if="m.status === 'streaming'" class="caret">▍</span></p>
+          <span v-if="m.system === 'greeting'" class="hand tag">开场</span>
         </div>
       </div>
 
@@ -124,7 +180,7 @@ function onKeydown(e) {
         v-model="draft"
         class="input"
         rows="1"
-        placeholder="说点什么…"
+        :placeholder="`跟 ${character.name} 说点什么…`"
         enterkeyhint="send"
         @keydown="onKeydown"
       ></textarea>
@@ -140,6 +196,40 @@ function onKeydown(e) {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.chat-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1.5px dashed var(--line);
+}
+.btn.ghost {
+  border-color: transparent;
+  box-shadow: none;
+  padding-left: 4px;
+}
+.who {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.mini {
+  width: 30px;
+  height: 30px;
+  border-radius: 4px;
+  object-fit: cover;
+  border: 1px solid var(--paper-edge);
+  box-shadow: var(--shadow-card);
+}
+.who-name {
+  font-size: 18px;
+}
+.role {
+  margin-left: auto;
+  font-size: 12px;
 }
 
 .list {
@@ -162,17 +252,11 @@ function onKeydown(e) {
   text-align: center;
   padding: 26px 30px;
   transform: rotate(-1.5deg);
-  max-width: 300px;
-}
-.empty-card .big {
-  font-size: 20px;
-  margin: 6px 0 8px;
-  color: var(--ink-soft);
+  max-width: 320px;
 }
 
 .row {
   display: flex;
-  max-width: 100%;
 }
 .row.user {
   justify-content: flex-end;
@@ -189,8 +273,6 @@ function onKeydown(e) {
   box-shadow: var(--shadow-card);
   transform: rotate(var(--tilt));
 }
-
-/* 自己说的话：黄便签，右下角有点翘起 */
 .bubble.user {
   background: var(--paper-sticky);
   border: 1px solid rgba(170, 145, 90, 0.3);
@@ -204,8 +286,6 @@ function onKeydown(e) {
   border-style: solid;
   border-color: transparent transparent rgba(190, 165, 105, 0.35) transparent;
 }
-
-/* 它说的话：白纸条，左上角贴了截胶带 */
 .bubble.assistant {
   background: var(--paper-card);
   border: 1px solid var(--paper-edge);
@@ -219,6 +299,17 @@ function onKeydown(e) {
   transform: rotate(-5deg);
   background: var(--tape-pink);
 }
+.tag {
+  position: absolute;
+  right: -22px;
+  top: -9px;
+  font-size: 11px;
+  background: var(--paper-sticky);
+  border: 1px solid rgba(170, 145, 90, 0.35);
+  padding: 1px 6px;
+  transform: rotate(4deg);
+  color: var(--ink-soft);
+}
 
 .text {
   margin: 0;
@@ -227,7 +318,6 @@ function onKeydown(e) {
   white-space: pre-wrap;
   word-break: break-word;
 }
-
 .caret {
   color: var(--ink-pencil);
   animation: blink 1s steps(2, start) infinite;
@@ -258,7 +348,6 @@ function onKeydown(e) {
   border-top: 1.5px solid var(--line);
   background: rgba(255, 253, 246, 0.72);
 }
-
 .input {
   flex: 1;
   font-family: var(--font-body);
@@ -273,13 +362,12 @@ function onKeydown(e) {
   resize: none;
   max-height: 30dvh;
   min-height: 42px;
-  field-sizing: content; /* 支持的浏览器里输入框会跟着内容长高 */
+  field-sizing: content;
 }
 .input:focus {
   border-color: var(--ink-blue);
   border-style: solid;
 }
-
 .send {
   flex: none;
   height: 42px;

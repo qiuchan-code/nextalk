@@ -1,13 +1,19 @@
 <script setup>
 import { ref, computed } from 'vue'
+import Home from './views/Home.vue'
+import CharacterEdit from './views/CharacterEdit.vue'
 import Chat from './views/Chat.vue'
 import Settings from './views/Settings.vue'
 import { isConfigured } from './lib/settings.js'
+import { useCharacters } from './lib/characters.js'
+import { openSession } from './lib/sessions.js'
+import { get, STORES } from './lib/db.js'
 
-// 没配 Key 的话直接把人送到设置页，省得对着一个不能用的输入框发呆
-const view = ref(isConfigured() ? 'chat' : 'settings')
+const view = ref(isConfigured() ? 'home' : 'settings')
+const activeCharacter = ref(null)
+const activeSessionId = ref('')
+const chars = useCharacters()
 
-// 小彩蛋：标题旁边的手写批注按时间变
 const subtitle = computed(() => {
   const h = new Date().getHours()
   if (h < 5) return '这个点还没睡…'
@@ -18,6 +24,30 @@ const subtitle = computed(() => {
   if (h < 23) return '晚上好'
   return '夜深了'
 })
+
+async function pickCharacter(id) {
+  const char = await get(STORES.characters, id)
+  if (!char) return
+  const session = await openSession(char.id)
+  activeCharacter.value = char
+  activeSessionId.value = session.id
+  view.value = 'chat'
+}
+
+async function savedCharacter() {
+  view.value = 'home'
+  await chars.reload()
+}
+
+function backHome() {
+  activeCharacter.value = null
+  activeSessionId.value = ''
+  view.value = 'home'
+}
+
+function askSettings() {
+  view.value = 'settings'
+}
 </script>
 
 <template>
@@ -27,16 +57,29 @@ const subtitle = computed(() => {
       <span class="note subtitle">{{ subtitle }}</span>
     </div>
     <nav class="nav">
-      <button class="tab hand" :class="{ on: view === 'chat' }" @click="view = 'chat'">聊天</button>
-      <button class="tab hand" :class="{ on: view === 'settings' }" @click="view = 'settings'">
-        设置
+      <button class="tab hand" :class="{ on: view === 'home' || view === 'chat' }" @click="backHome">
+        角色
       </button>
+      <button class="tab hand" :class="{ on: view === 'settings' }" @click="askSettings">设置</button>
     </nav>
   </header>
 
   <main class="stage">
-    <Chat v-show="view === 'chat'" @need-settings="view = 'settings'" />
-    <Settings v-if="view === 'settings'" @done="view = 'chat'" />
+    <Home
+      v-if="view === 'home'"
+      :active-id="activeCharacter?.id || ''"
+      @pick="pickCharacter"
+      @create="view = 'create'"
+    />
+    <CharacterEdit v-else-if="view === 'create'" @save="savedCharacter" @cancel="backHome" />
+    <Chat
+      v-else-if="view === 'chat' && activeCharacter"
+      :key="activeSessionId"
+      :character="activeCharacter"
+      :session-id="activeSessionId"
+      @back="backHome"
+    />
+    <Settings v-else-if="view === 'settings'" @done="view = 'home'" />
   </main>
 </template>
 
@@ -49,7 +92,6 @@ const subtitle = computed(() => {
   padding: 10px 16px 8px;
   padding-top: calc(10px + env(safe-area-inset-top));
   border-bottom: 1.5px solid var(--line);
-  /* 底边画成手撕纸的感觉：再叠一条歪的虚线 */
   position: relative;
 }
 .topbar::after {
@@ -62,7 +104,6 @@ const subtitle = computed(() => {
   border-bottom: 1px dashed rgba(150, 135, 105, 0.35);
   transform: rotate(-0.25deg);
 }
-
 .brand {
   display: flex;
   align-items: baseline;
@@ -79,7 +120,6 @@ const subtitle = computed(() => {
   transform: rotate(1deg);
   font-size: 13px;
 }
-
 .nav {
   display: flex;
   gap: 6px;
@@ -95,14 +135,12 @@ const subtitle = computed(() => {
 }
 .tab.on {
   color: var(--ink);
-  /* 选中的标签像被荧光笔涂过 */
   background: linear-gradient(transparent 62%, rgba(244, 213, 108, 0.65) 62%);
   border-bottom-color: var(--ink);
 }
-
 .stage {
   flex: 1;
-  min-height: 0; /* 关键：让子元素能正确滚动而不是撑破容器 */
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
