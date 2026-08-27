@@ -97,6 +97,24 @@ function makeMsg(role, text) {
   }
 }
 
+// 把消息切成"正文 / 括号动作旁白"两段，旁白（（）和()都认）渲染成灰色。
+// 星野的做法：动作、神态标成灰色，读起来更像剧本，不出戏。
+function segments(text) {
+  if (!text) return [{ t: 's', v: '' }]
+  const out = []
+  const re = /（[^（）]*）|\([^()]*\)/g
+  let last = 0
+  let m
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push({ t: 's', v: text.slice(last, m.index) })
+    out.push({ t: 'a', v: m[0] })
+    last = m.index + m[0].length
+  }
+  if (last < text.length) out.push({ t: 's', v: text.slice(last) })
+  if (!out.length) out.push({ t: 's', v: text })
+  return out
+}
+
 function scrollToBottom() {
   nextTick(() => {
     const el = listEl.value
@@ -478,7 +496,13 @@ function sessionLabel(s) {
           @contextmenu.prevent
         >
           <span v-if="m.role === 'assistant'" class="tape mini"></span>
-          <p class="text">{{ m.text }}<span v-if="m.status === 'streaming'" class="caret">▍</span></p>
+          <p class="text">
+            <template v-for="(seg, i) in segments(m.text)" :key="i">
+              <span v-if="seg.t === 'a'" class="act">{{ seg.v }}</span>
+              <template v-else>{{ seg.v }}</template>
+            </template>
+            <span v-if="m.status === 'streaming'" class="caret">▍</span>
+          </p>
           <span v-if="m.system === 'greeting'" class="hand tag">开场</span>
         </div>
       </div>
@@ -557,7 +581,12 @@ function sessionLabel(s) {
           <div v-for="(o, i) in retry.options" :key="i" class="alt">
             <span class="alt-num hand">{{ i + 1 }}</span>
             <textarea v-if="o.editing" v-model="o.draft" class="field edit-box" rows="3"></textarea>
-            <p v-else class="alt-text hand">{{ o.text }}</p>
+            <p v-else class="alt-text hand">
+              <template v-for="(seg, i) in segments(o.text)" :key="i">
+                <span v-if="seg.t === 'a'" class="act">{{ seg.v }}</span>
+                <template v-else>{{ seg.v }}</template>
+              </template>
+            </p>
             <div class="alt-actions">
               <template v-if="!o.editing">
                 <button class="mini-btn hand" @click="chooseAlt(o)">用这句</button>
@@ -733,6 +762,11 @@ function sessionLabel(s) {
   line-height: 1.78;
   white-space: pre-wrap;
   word-break: break-word;
+}
+/* 括号里的动作/心情旁白：星野式灰色，正文是黑水笔 */
+.act {
+  color: var(--ink-pencil);
+  letter-spacing: 0.2px;
 }
 .caret {
   color: var(--ink-pencil);
