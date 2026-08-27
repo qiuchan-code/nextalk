@@ -7,11 +7,12 @@
  * 所以 prompt、角色配比、生成方式都不同。
  */
 
-import { chatOnce, extractJSON } from './client.js'
+import { chatOnce, streamChat, extractJSON } from './client.js'
 import { settings } from './settings.js'
 import { buildSystemPrompt, traitsToSampling } from './prompt.js'
 
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v))
+const REQUEST_TIMEOUT = 25000 // 单次请求 25 秒还没回就算失败，别让用户干等
 
 /** 限制并发的小水池，避免 8 个请求同时怼上 API 被限流 */
 async function runPool(tasks, limit = 3) {
@@ -43,16 +44,20 @@ export async function alternateReplies(character, history, count = 3) {
 
   const tasks = Array.from({ length: count }, (_, i) => {
     const jitter = ((i % 3) - 1) * 0.16 // 让每条的"胆量"略有不同
-    return () =>
-      chatOnce({
+    return () => {
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT)
+      return chatOnce({
         endpoint: settings.endpoint,
         apiKey: settings.apiKey,
         model: settings.model,
         messages: msgs,
         temperature: clamp(base.temperature + jitter, 0.3, 1.4),
         maxTokens,
-        presencePenalty: base.presencePenalty
-      })
+        presencePenalty: base.presencePenalty,
+        signal: ctrl.signal
+      }).finally(() => clearTimeout(timer))
+    }
   })
 
   const results = await runPool(tasks, 3)
@@ -63,40 +68,33 @@ export async function alternateReplies(character, history, count = 3) {
 }
 
 /**
- * 生成"你接下来可以说的话"（填充输入框用）。
- * 一次请求拿 8 条短句，让模型按"你"的身份和口气来建议。
+ * 生成"你接下来可以说的话"，逐字流式返回。
+ * 必须流式：非流式要等模型把整段生成完才有字，屏幕干等会像挂掉。
+ * 让模型"每行一句"，调用方按换行拆出来，边生成边显示。
  */
-export async function inspireReplies(character, historyText, count = 3) {
+export async function* inspireRepliesStream(character, historyText, count = 3, signal) {
   const sys = '你在角色扮演里充当"接话参谋"，替用户琢磨接下来可以怎么回。'
   const user = `下面是用户和「${character.name}」的一段对话。请以"用户本人"的立场，给出 ${count} 条接下来用户可以说的话。
+
 要求：
 - 角度多样：推进剧情、表达好感、打趣、提问、吐槽、闹别扭、撒娇……
-- 每条一句话，不超过 30 字，口吻自然，别像 AI 写的
+- 每句一行，一句话不超过 30 字，口吻自然，别像 AI 写的
 - 要紧贴当下语境、顺着角色的梗走
-
-只输出 JSON 数组，例如 ["……","……"]，不要任何其他文字。
+- 直接输出这些句子，每句一行，不要编号、不要方括号、不要 JSON、不要任何额外说明
 
 最近对话：
 ${historyText}`
 
-  try {
-    const reply = await chatOnce({
-      endpoint: settings.endpoint,
-      apiKey: settings.apiKey,
-      model: settings.model,
-      messages: [
-        { role: 'system', content: sys },
-        { role: 'user', content: user }
-      ],
-      temperature: 0.9,
-      maxTokens: 500
-    })
-    const arr = extractJSON(reply)
-    if (Array.isArray(arr)) {
-      return arr.map((s) => String(s).trim()).filter(Boolean).slice(0, count)
-    }
-  } catch {
-    /* 掉到兜底 */
-  }
-  return []
+  yield* streamChat({
+    endpoint: settings.endpoint,
+    apiKey: settings.apiKey,
+    model: settings.model,
+    messages: [
+      { role: 'system', content: sys },
+      { role: 'user', content: user }
+    ],
+    temperature: 0.9,
+    maxTokens: 320,
+    signal
+  })
 }

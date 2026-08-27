@@ -1,7 +1,7 @@
 <script setup>
 import { ref, nextTick, computed, onMounted, onUnmounted } from 'vue'
 import { settings } from '../lib/settings.js'
-import { streamChat } from '../lib/client.js'
+import { streamChat, extractJSON } from '../lib/client.js'
 import { buildSystemPrompt, traitsToSampling } from '../lib/prompt.js'
 import { loadMessages, saveMessage, nextSeq } from '../lib/sessions.js'
 import { newId, removeMany, STORES } from '../lib/db.js'
@@ -13,7 +13,7 @@ import {
   recordScene,
   loadEvents
 } from '../lib/memory.js'
-import { alternateReplies, inspireReplies } from '../lib/suggest.js'
+import { alternateReplies, inspireRepliesStream } from '../lib/suggest.js'
 
 const props = defineProps({
   character: { type: Object, required: true },
@@ -346,15 +346,51 @@ function toggleInspire() {
 async function loadInspiration() {
   if (inspireLoading.value) return
   inspireLoading.value = true
+  inspire.value = [] // 先清空，逐条填
   const hist = messages.value
     .slice(-8)
     .map((m) => `${m.role === 'user' ? '用户' : props.character.name}：${(m.text || '').slice(0, 120)}`)
     .join('\n')
+
+  // 流式生成：每想好一句就推到列表里，不再等全部生成完
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 30000) // 30 秒兜底，不让它一直挂着
+  let buf = '' // 攒着不满一行的半截
+  let accepted = '' // 已接受的干净句子（用于去重）+ 原始全文
+  let raw = '' // 模型吐的全部原样文本（兜底解析用）
+
+  const pushLine = (t) => {
+    t = t.trim()
+    // 跳过模型吐的方括号/引号/编号残渣
+    if (!t || /^[\[\]"”0-9.、-]/.test(t)) return
+    if (accepted.includes(t)) return // 去重
+    accepted += t + '\n'
+    raw += t + '\n'
+    inspire.value = [...inspire.value, t].slice(0, 3)
+  }
+
   try {
-    inspire.value = await inspireReplies(props.character, hist, 3)
+    for await (const piece of inspireRepliesStream(props.character, hist, 3, ctrl.signal)) {
+      buf += piece
+      raw += piece
+      const parts = buf.split('\n')
+      buf = parts.pop() ?? ''
+      for (const p of parts) pushLine(p)
+    }
+    const tail = buf.trim()
+    if (tail) pushLine(tail) // 最后一行可能没换行符
+
+    // 兜底：万一模型还是把内容写成 JSON 数组或一串逗号隔开的
+    if (!inspire.value.length) {
+      const arr = extractJSON(raw)
+      if (Array.isArray(arr)) {
+        inspire.value = arr.map((s) => String(s).trim()).filter(Boolean).slice(0, 3)
+      }
+    }
   } catch {
-    inspire.value = []
+    if (!inspire.value.length) inspire.value = []
   } finally {
+    clearTimeout(timer)
     inspireLoading.value = false
   }
 }
@@ -470,12 +506,13 @@ function sessionLabel(s) {
     </div>
 
     <!-- 灵感回复 -->
-    <div v-if="inspire && inspire.length" class="inspire">
+    <div v-if="inspireLoading || (inspire && inspire.length)" class="inspire">
       <div class="inspire-head">
         <span class="hand inspire-label">灵感 · 你可以这么说</span>
         <button class="mini-btn hand" :disabled="inspireLoading" @click="loadInspiration">换一批</button>
       </div>
       <div class="inspire-list">
+        <p v-if="inspireLoading && !inspire.length" class="hand loading-mini">正在想…</p>
         <button v-for="t in inspire" :key="t" class="chip hand" @click="pickInspire(t)">{{ t }}</button>
       </div>
     </div>
@@ -483,9 +520,9 @@ function sessionLabel(s) {
     <div class="composer">
       <button
         class="bulb hand"
-        :class="{ on: !!(inspire && inspire.length) }"
+        :class="{ on: inspireLoading || !!(inspire && inspire.length) }"
         :disabled="busy"
-        :title="inspire && inspire.length ? '收起灵感' : '灵感回复'"
+        :title="inspire && inspire.length || inspireLoading ? '收起灵感' : '灵感回复'"
         @click="toggleInspire"
       >
         💡
@@ -791,6 +828,12 @@ function sessionLabel(s) {
 .inspire-label {
   font-size: 13px;
   color: var(--ink-soft);
+}
+.loading-mini {
+  font-size: 14px;
+  color: var(--ink-pencil);
+  margin: 4px 0;
+  animation: blink 1.2s steps(2, start) infinite;
 }
 .inspire-list {
   display: flex;
