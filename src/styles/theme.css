@@ -1,0 +1,173 @@
+/* ===========================================================
+   纸片人 · 手账贴纸风主题
+   规矩：不要深色背景、不要毛玻璃、不要紫蓝渐变、不要完美对齐的卡片网格。
+   要纸、要胶带、要手写、要歪一点点。
+   =========================================================== */
+
+:root {
+  /* 纸 */
+  --paper: #f6efe0;
+  --paper-card: #fffdf6;
+  --paper-sticky: #fdf3c8; /* 便签黄 */
+  --paper-edge: #e5dbc5;
+
+  /* 字 */
+  --ink: #3a352e; /* 黑水笔 */
+  --ink-soft: #6d6459; /* 淡一点的字 */
+  --ink-pencil: #9a9084; /* 铅笔灰，用于注释 */
+  --ink-red: #c2554d; /* 红笔，批注/危险 */
+  --ink-green: #4a7a6f; /* 绿笔，成功 */
+  --ink-blue: #4a6b8a; /* 蓝笔，链接 */
+
+  /* 胶带（半透明，压在卡片角上） */
+  --tape-yellow: rgba(244, 213, 108, 0.7);
+  --tape-blue: rgba(150, 205, 220, 0.65);
+  --tape-pink: rgba(240, 168, 174, 0.62);
+  --tape-green: rgba(168, 205, 165, 0.62);
+
+  /* 线 */
+  --line: #ddd2ba;
+  --line-soft: rgba(150, 140, 120, 0.16);
+
+  /* 字体：优先用户装了霞鹜文楷就用，否则退回系统楷体 */
+  --font-hand: "LXGW WenKai", "霞鹜文楷", "Kaiti SC", "STKaiti", "KaiTi", "楷体", serif;
+  --font-body: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+
+  --shadow-card: 0 1px 2px rgba(90, 75, 50, 0.08), 0 6px 14px rgba(90, 75, 50, 0.07);
+  --shadow-lift: 0 2px 4px rgba(90, 75, 50, 0.1), 0 12px 24px rgba(90, 75, 50, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--ink);
+  background-color: var(--paper);
+  /* 纸的质感：极淡的横线本子纹 + 一层细颗粒 */
+  background-image:
+    repeating-linear-gradient(transparent 0 31px, var(--line-soft) 31px 32px),
+    radial-gradient(rgba(160, 140, 110, 0.11) 1px, transparent 1.2px);
+  background-size: auto, 5px 5px;
+  /* 手机上禁止双击缩放，避免聊天时误触 */
+  touch-action: manipulation;
+  overscroll-behavior-y: none;
+}
+
+#app {
+  /* dvh 而非 vh：手机地址栏收缩、键盘弹起时不会跳 */
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- 通用零件 ---------- */
+
+/* 一张纸卡片，默认微微歪 */
+.paper-card {
+  position: relative;
+  background: var(--paper-card);
+  border-radius: 3px;
+  box-shadow: var(--shadow-card);
+  /* 纸边不用圆角画，用一点点不规则的边框色 */
+  border: 1px solid var(--paper-edge);
+  padding: 14px 16px;
+}
+
+/* 胶带：贴在卡片上边缘，用伪元素 */
+.tape {
+  position: absolute;
+  width: 78px;
+  height: 24px;
+  top: -11px;
+  left: 50%;
+  margin-left: -39px;
+  background: var(--tape-yellow);
+  /* 胶带撕口：左右两边做成锯齿感 */
+  clip-path: polygon(3% 0, 97% 4%, 100% 96%, 0 100%);
+  transform: rotate(-2.4deg);
+  box-shadow: 0 1px 2px rgba(120, 100, 60, 0.13);
+  pointer-events: none;
+}
+.tape.blue { background: var(--tape-blue); }
+.tape.pink { background: var(--tape-pink); }
+.tape.green { background: var(--tape-green); }
+
+/* 手写标注 */
+.hand {
+  font-family: var(--font-hand);
+}
+.note {
+  font-family: var(--font-hand);
+  color: var(--ink-pencil);
+  font-size: 14px;
+}
+
+/* 荧光笔划重点 */
+.marker {
+  background: linear-gradient(transparent 58%, rgba(244, 213, 108, 0.62) 58%);
+  padding: 0 2px;
+}
+
+/* 按钮：像盖了个章 / 剪下来的纸片 */
+.btn {
+  font-family: var(--font-hand);
+  font-size: 16px;
+  color: var(--ink);
+  background: var(--paper-card);
+  border: 1.5px solid var(--ink-pencil);
+  border-radius: 2px;
+  padding: 7px 16px;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 rgba(120, 105, 80, 0.18);
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.btn:hover { transform: translate(-1px, -1px); box-shadow: 3px 3px 0 rgba(120, 105, 80, 0.2); }
+.btn:active { transform: translate(1px, 1px); box-shadow: 0 0 0 rgba(120, 105, 80, 0.2); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; box-shadow: none; }
+.btn.primary { background: var(--paper-sticky); border-color: var(--ink); }
+.btn.danger { color: var(--ink-red); border-color: var(--ink-red); }
+
+/* 输入框：像在横线上写字 */
+.field {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 15px;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  border-bottom: 1.5px dashed var(--line);
+  padding: 7px 2px;
+  outline: none;
+}
+.field:focus { border-bottom-color: var(--ink-blue); border-bottom-style: solid; }
+
+textarea.field {
+  border: 1.5px dashed var(--line);
+  border-radius: 3px;
+  padding: 9px 10px;
+  resize: vertical;
+  line-height: 1.65;
+}
+
+/* 滚动条细一点，别抢戏 */
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-thumb {
+  background: rgba(150, 135, 105, 0.3);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track { background: transparent; }
+
+/* 尊重系统的"减少动效"设置 */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

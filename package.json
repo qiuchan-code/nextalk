@@ -1,0 +1,19 @@
+{
+  "name": "zhipianren",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "纸片人 —— 手账风 AI 角色扮演聊天应用",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.5.42"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.8",
+    "vite": "^8.2.2"
+  }
+}
