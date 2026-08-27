@@ -64,10 +64,16 @@ body {
 }
 
 #app {
-  /* dvh 而非 vh：手机地址栏收缩、键盘弹起时不会跳 */
-  height: 100dvh;
+  /* 老浏览器兜底用 vh */
+  height: 100vh;
   display: flex;
   flex-direction: column;
+}
+@supports (height: 100dvh) {
+  #app {
+    /* dvh 而非 vh：手机地址栏收缩、键盘弹起时不会跳 */
+    height: 100dvh;
+  }
 }
 
 /* ---------- 通用零件 ---------- */

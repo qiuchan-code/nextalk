@@ -2,11 +2,47 @@
 import { ref } from 'vue'
 import { settings, PROVIDERS, isConfigured } from '../lib/settings.js'
 import { chatOnce } from '../lib/client.js'
+import { exportAll, importAll } from '../lib/backup.js'
 
 const emit = defineEmits(['done'])
 
 const testing = ref(false)
 const testResult = ref(null) // { ok: boolean, text: string }
+const backupMsg = ref(null) // { ok, text }
+const backupBusy = ref(false)
+
+async function doExport() {
+  backupBusy.value = true
+  backupMsg.value = null
+  try {
+    const info = await exportAll()
+    backupMsg.value = { ok: true, text: `已导出：${info.characters} 个角色、${info.messages} 条消息（API Key 不算在内）` }
+  } catch (err) {
+    backupMsg.value = { ok: false, text: '导出失败：' + (err.message || err) }
+  } finally {
+    backupBusy.value = false
+  }
+}
+
+async function doImport(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  if (!confirm(`导入会覆盖当前所有角色和聊天记录，确定吗？`)) {
+    e.target.value = ''
+    return
+  }
+  backupBusy.value = true
+  backupMsg.value = null
+  try {
+    const info = await importAll(file)
+    backupMsg.value = { ok: true, text: `已恢复：${info.characters} 个角色。等会儿回聊天页刷一下。` }
+  } catch (err) {
+    backupMsg.value = { ok: false, text: '导入失败：' + (err.message || err) }
+  } finally {
+    backupBusy.value = false
+    e.target.value = ''
+  }
+}
 
 function applyPreset(p) {
   settings.endpoint = p.endpoint
@@ -115,6 +151,20 @@ async function testConnection() {
         <input v-model.number="settings.historyWindow" class="field short" type="number" min="4" step="2" />
         <span class="note tiny">每次发给模型的原文条数，更早的会压成剧情摘要</span>
       </label>
+    </div>
+
+    <div class="sheet paper-card slim">
+      <span class="tape green"></span>
+      <h2 class="hand section-title">数据备份</h2>
+      <p class="note">数据都存在这台设备的浏览器里，清缓存会丢。重要的角色和聊天，隔一阵导出一份留档。</p>
+      <div class="actions">
+        <button class="btn" :disabled="backupBusy" @click="doExport">导出备份</button>
+        <label class="btn" :disabled="backupBusy">
+          导入恢复
+          <input type="file" accept="application/json" hidden @change="doImport" />
+        </label>
+      </div>
+      <p v-if="backupMsg" class="result" :class="backupMsg.ok ? 'good' : 'bad'">{{ backupMsg.text }}</p>
     </div>
 
     <p class="note footnote">

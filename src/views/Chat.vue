@@ -1,5 +1,5 @@
 <script setup>
-import { ref, nextTick, computed, onMounted } from 'vue'
+import { ref, nextTick, computed, onMounted, onUnmounted } from 'vue'
 import { settings } from '../lib/settings.js'
 import { streamChat } from '../lib/client.js'
 import { buildSystemPrompt, traitsToSampling } from '../lib/prompt.js'
@@ -32,7 +32,20 @@ let controller = null
 
 const sampling = computed(() => traitsToSampling(props.character.traits, settings.maxTokens))
 
-onMounted(loadMsgs)
+onMounted(() => {
+  loadMsgs()
+  // 手机：键盘弹起时可视区变小，把聊天列表压到最底，别让最新一条被顶没了
+  window.visualViewport?.addEventListener('resize', onViewportResize)
+})
+onUnmounted(() => {
+  window.visualViewport?.removeEventListener('resize', onViewportResize)
+})
+
+function onViewportResize() {
+  // 只有在输入框聚焦（键盘正开着）时才需要追底
+  const input = document.activeElement
+  if (input && input.classList?.contains('input')) scrollToBottom()
+}
 
 async function loadMsgs() {
   const list = await loadMessages(props.sessionId)
