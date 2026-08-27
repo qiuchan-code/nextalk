@@ -62,7 +62,10 @@ const defaults = {
   // 记忆相关（Phase 3 用）
   memoryModel: '', // 留空 = 用对话模型
   memoryEveryN: 8, // 每多少条消息提炼一次记忆
-  historyWindow: 14 // 每次发给模型的原文消息条数
+  historyWindow: 14, // 每次发给模型的原文消息条数
+  // 聊天区背景（Phase 5 优化）：颜色或自定义壁纸，空 = 纸质默认
+  chatBgColor: '', // hex 颜色
+  chatBgImage: ''  // 自定义壁纸 dataURL，设了就盖过颜色
 }
 
 function load() {

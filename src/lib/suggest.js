@@ -36,7 +36,7 @@ async function runPool(tasks, limit = 3) {
  * history 是 {role, content} 数组（不含被替换的那条回复，也不含 system）。
  * 同一段上下文跑 count 次，每次用一点温度抖动制造差异，再去重。
  */
-export async function alternateReplies(character, history, count = 8) {
+export async function alternateReplies(character, history, count = 3) {
   const base = traitsToSampling(character.traits)
   const maxTokens = Math.min(base.maxTokens, 420) // 备选不用太长，够挑就行
   const msgs = [{ role: 'system', content: buildSystemPrompt(character) }, ...history]
@@ -66,7 +66,7 @@ export async function alternateReplies(character, history, count = 8) {
  * 生成"你接下来可以说的话"（填充输入框用）。
  * 一次请求拿 8 条短句，让模型按"你"的身份和口气来建议。
  */
-export async function inspireReplies(character, historyText, count = 8) {
+export async function inspireReplies(character, historyText, count = 3) {
   const sys = '你在角色扮演里充当"接话参谋"，替用户琢磨接下来可以怎么回。'
   const user = `下面是用户和「${character.name}」的一段对话。请以"用户本人"的立场，给出 ${count} 条接下来用户可以说的话。
 要求：

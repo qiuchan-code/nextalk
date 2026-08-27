@@ -44,6 +44,19 @@ let pressStart = null
 
 const sampling = computed(() => traitsToSampling(props.character.traits, settings.maxTokens))
 
+// 聊天区背景：颜色或自定义壁纸，空 = 纸质默认
+const chatBgStyle = computed(() => {
+  if (settings.chatBgImage) {
+    return {
+      backgroundImage: `url(${settings.chatBgImage})`,
+      backgroundSize: 'cover',
+      backgroundPosition: 'center'
+    }
+  }
+  if (settings.chatBgColor) return { backgroundColor: settings.chatBgColor }
+  return {}
+})
+
 onMounted(() => {
   loadMsgs()
   window.visualViewport?.addEventListener('resize', onViewportResize)
@@ -267,20 +280,21 @@ async function copyText(text) {
 
 function openRetry(target) {
   menu.value = null
-  const idx = messages.value.findIndex((mm) => mm.id === target.id)
-  const context = messages.value.slice(0, idx)
   retry.value = { targetId: target.id, options: [], loading: true, error: '' }
-  generateAlternatives(context)
+  generateAlternatives()
 }
 
-async function generateAlternatives(context) {
-  if (!retry.value) return
-  retry.value.loading = true
-  retry.value.error = ''
-  const ctx = context
+async function generateAlternatives() {
+  const r = retry.value
+  if (!r) return
+  r.loading = true
+  r.error = ''
+  const idx = messages.value.findIndex((mm) => mm.id === r.targetId)
+  const ctx = messages.value
+    .slice(0, idx)
     .filter((m) => m.status !== 'streaming' && m.text.trim())
     .map((m) => ({ role: m.role, content: m.text }))
-  const alts = await alternateReplies(props.character, ctx, 8)
+  const alts = await alternateReplies(props.character, ctx, 3)
   if (!retry.value) return
   retry.value.options = alts.map((text) => ({ text, editing: false, draft: text }))
   retry.value.loading = false
@@ -335,7 +349,7 @@ async function loadInspiration() {
     .map((m) => `${m.role === 'user' ? '用户' : props.character.name}：${(m.text || '').slice(0, 120)}`)
     .join('\n')
   try {
-    inspire.value = await inspireReplies(props.character, hist, 8)
+    inspire.value = await inspireReplies(props.character, hist, 3)
   } catch {
     inspire.value = []
   } finally {
@@ -400,7 +414,7 @@ function sessionLabel(s) {
       </button>
     </div>
 
-    <div ref="listEl" class="list">
+    <div ref="listEl" class="list" :style="chatBgStyle">
       <div v-if="!messages.length" class="empty">
         <div class="empty-card paper-card">
           <span class="tape green"></span>
@@ -484,9 +498,12 @@ function sessionLabel(s) {
         <span class="tape blue"></span>
         <header class="sheet-head">
           <span class="hand title">换个说法</span>
-          <button class="btn ghost" @click="retry = null">关闭</button>
+          <div class="sheet-actions">
+            <button class="btn ghost" :disabled="retry.loading" @click="generateAlternatives">换一批</button>
+            <button class="btn ghost" @click="retry = null">关闭</button>
+          </div>
         </header>
-        <p v-if="retry.loading" class="hand loading-tip">正在想 8 种不同说法…</p>
+        <p v-if="retry.loading" class="hand loading-tip">正在想 3 种不同说法…</p>
         <p v-else-if="retry.error" class="error hand">{{ retry.error }}</p>
 
         <div v-if="!retry.loading" class="alts">
@@ -616,8 +633,8 @@ function sessionLabel(s) {
 .bubble {
   position: relative;
   max-width: min(80%, 560px);
-  padding: 11px 14px;
-  border-radius: 2px;
+  padding: 11px 15px;
+  border-radius: 16px; /* 圆角便签，不生硬 */
   box-shadow: var(--shadow-card);
   transform: rotate(var(--tilt));
   -webkit-user-select: none;
@@ -626,19 +643,12 @@ function sessionLabel(s) {
 .bubble.user {
   background: #fbe7a3;
   border: 1px solid rgba(176, 146, 76, 0.4);
-}
-.bubble.user::after {
-  content: '';
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  border-width: 0 0 13px 13px;
-  border-style: solid;
-  border-color: transparent transparent rgba(176, 146, 76, 0.4) transparent;
+  border-bottom-right-radius: 4px;
 }
 .bubble.assistant {
   background: #fdfcf7;
   border: 1px solid var(--paper-edge);
+  border-bottom-left-radius: 4px;
 }
 .tape.mini {
   width: 42px;
@@ -727,6 +737,7 @@ function sessionLabel(s) {
   padding: 10px 12px;
   transform: rotate(-0.4deg);
   border: 1.5px solid rgba(194, 85, 77, 0.45);
+  border-radius: 12px;
 }
 .rewind-text {
   font-size: 14px;
@@ -772,7 +783,7 @@ function sessionLabel(s) {
   color: var(--ink);
   background: var(--paper-sticky);
   border: 1px solid rgba(176, 146, 76, 0.35);
-  border-radius: 2px;
+  border-radius: 12px;
   text-align: left;
   padding: 8px 11px;
   cursor: pointer;
@@ -863,6 +874,20 @@ function sessionLabel(s) {
   font-size: 18px;
   letter-spacing: 1px;
 }
+.sheet-actions {
+  display: flex;
+  gap: 2px;
+}
+.sheet-actions .btn.ghost {
+  border-color: transparent;
+  box-shadow: none;
+  padding: 4px 8px;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+.sheet-actions .btn.ghost:disabled {
+  opacity: 0.4;
+}
 .loading-tip {
   color: var(--ink-soft);
   text-align: center;
@@ -877,7 +902,7 @@ function sessionLabel(s) {
 .alt {
   position: relative;
   border: 1px solid var(--paper-edge);
-  border-radius: 3px;
+  border-radius: 12px;
   padding: 10px 12px 10px 36px;
   background: #fbf7ec;
   box-shadow: var(--shadow-card);

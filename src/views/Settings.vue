@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { settings, PROVIDERS, isConfigured } from '../lib/settings.js'
 import { chatOnce } from '../lib/client.js'
 import { exportAll, importAll } from '../lib/backup.js'
+import { compressAvatar } from '../lib/characters.js'
 
 const emit = defineEmits(['done'])
 
@@ -10,6 +11,35 @@ const testing = ref(false)
 const testResult = ref(null) // { ok: boolean, text: string }
 const backupMsg = ref(null) // { ok, text }
 const backupBusy = ref(false)
+
+// 聊天区背景的默认色卡（避开紫蓝那套 AI 味）
+const BG_PRESETS = [
+  { name: '默认', v: '' },
+  { name: '奶黄', v: '#f8f0d8' },
+  { name: '淡青', v: '#e3efe9' },
+  { name: '淡粉', v: '#f7e7e3' },
+  { name: '淡蓝', v: '#e4ecf2' },
+  { name: '暖沙', v: '#f3ead6' }
+]
+const bgBusy = ref(false)
+
+function setBgColor(v) {
+  settings.chatBgColor = v
+  settings.chatBgImage = '' // 选颜色时清掉壁纸，让意图明确
+}
+function pickBg(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  bgBusy.value = true
+  compressAvatar(file, 1024, 0.8)
+    .then((dataUrl) => { settings.chatBgImage = dataUrl; settings.chatBgColor = '' })
+    .catch((err) => alert(err.message))
+    .finally(() => { bgBusy.value = false; e.target.value = '' })
+}
+function clearBg() {
+  settings.chatBgImage = ''
+  settings.chatBgColor = ''
+}
 
 async function doExport() {
   backupBusy.value = true
@@ -154,6 +184,36 @@ async function testConnection() {
     </div>
 
     <div class="sheet paper-card slim">
+      <span class="tape"></span>
+      <h2 class="hand section-title">聊天背景</h2>
+      <p class="note">给聊天区换个底色或壁纸，角色的气泡会浮在上面。</p>
+
+      <div class="bg-row">
+        <button
+          v-for="c in BG_PRESETS"
+          :key="c.v"
+          class="bg-swatch"
+          :class="{ on: settings.chatBgColor === c.v && !settings.chatBgImage }"
+          :style="{ background: c.v || 'var(--paper)' }"
+          @click="setBgColor(c.v)"
+        >
+          <span class="hand swatch-name">{{ c.name }}</span>
+        </button>
+      </div>
+
+      <div class="bg-img-row">
+        <label class="btn" :disabled="bgBusy">
+          {{ bgBusy ? '处理中…' : '上传壁纸' }}
+          <input type="file" accept="image/*" hidden @change="pickBg" />
+        </label>
+        <button class="btn" :disabled="!settings.chatBgImage && !settings.chatBgColor" @click="clearBg">
+          恢复默认
+        </button>
+      </div>
+      <p v-if="settings.chatBgImage" class="note tiny">已设自定义壁纸，它会盖过上面的颜色。想换回纯色，点「恢复默认」。</p>
+    </div>
+
+    <div class="sheet paper-card slim">
       <span class="tape green"></span>
       <h2 class="hand section-title">数据备份</h2>
       <p class="note">数据都存在这台设备的浏览器里，清缓存会丢。重要的角色和聊天，隔一阵导出一份留档。</p>
@@ -290,6 +350,44 @@ async function testConnection() {
   color: var(--ink-red);
   border-color: var(--ink-red);
   background: rgba(194, 85, 77, 0.07);
+}
+
+/* 聊天背景色卡 */
+.bg-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin: 14px 0 8px;
+}
+.bg-swatch {
+  width: 58px;
+  height: 40px;
+  border-radius: 9px;
+  border: 1.5px solid var(--paper-edge);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  position: relative;
+  transition: border-color 0.1s, box-shadow 0.1s;
+}
+.bg-swatch.on {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px var(--ink), var(--shadow-card);
+}
+.swatch-name {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 3px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--ink-soft);
+  text-shadow: 0 1px 2px #fff;
+}
+.bg-img-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
 }
 
 .footnote {
