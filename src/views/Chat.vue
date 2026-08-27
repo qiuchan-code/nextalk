@@ -5,13 +5,21 @@ import { streamChat } from '../lib/client.js'
 import { buildSystemPrompt, traitsToSampling } from '../lib/prompt.js'
 import { loadMessages, saveMessage, nextSeq } from '../lib/sessions.js'
 import { newId, removeMany, STORES } from '../lib/db.js'
+import {
+  loadMemories,
+  selectForPrompt,
+  distill,
+  applyMemoryUpdates,
+  recordScene,
+  loadEvents
+} from '../lib/memory.js'
 
 const props = defineProps({
   character: { type: Object, required: true },
   sessionId: { type: String, required: true },
   sessions: { type: Array, default: () => [] } // 这个角色的所有会话线
 })
-const emit = defineEmits(['back', 'switch', 'new', 'tail'])
+const emit = defineEmits(['back', 'switch', 'new', 'tail', 'events'])
 
 const messages = ref([])
 const draft = ref('')
@@ -19,6 +27,7 @@ const busy = ref(false)
 const errorText = ref('')
 const listEl = ref(null)
 const rewindTarget = ref(null) // 待确认的回溯点消息
+const distilling = ref(false) // 记忆提炼互斥锁，防止并发
 let controller = null
 
 const sampling = computed(() => traitsToSampling(props.character.traits, settings.maxTokens))
@@ -67,8 +76,11 @@ function tilt(id) {
 // —— 发送与流式 —————————————————————————
 
 function historyPayload() {
+  // 只发最近 N 条原文，更早的靠记忆和事件簿带着，省 token 也避免上下文爆炸
+  const windowLen = settings.historyWindow || 14
   return messages.value
     .filter((m) => m.status !== 'streaming' && m.text.trim())
+    .slice(-windowLen)
     .map((m) => ({ role: m.role, content: m.text }))
 }
 
@@ -77,7 +89,22 @@ async function streamReply(reply) {
   controller = new AbortController()
   let body = ''
   try {
-    const msgs = [{ role: 'system', content: buildSystemPrompt(props.character) }, ...historyPayload()]
+    // 带上这个角色的长期记忆和本会话的事件簿，让"它记得你"真正生效
+    const [mems, evs] = await Promise.all([
+      loadMemories(props.character.id),
+      loadEvents(props.sessionId)
+    ])
+    const sel = selectForPrompt(mems)
+    const injected = [
+      ...sel.profiles,
+      ...sel.events,
+      ...(sel.relationship ? [sel.relationship] : [])
+    ]
+
+    const msgs = [
+      { role: 'system', content: buildSystemPrompt(props.character, { memories: injected, events: evs }) },
+      ...historyPayload()
+    ]
     for await (const piece of streamChat({
       endpoint: settings.endpoint,
       apiKey: settings.apiKey,
@@ -99,6 +126,7 @@ async function streamReply(reply) {
     if (body) {
       reply.status = 'complete'
       await saveMessage(reply).catch(() => {})
+      maybeDistill() // 后台提炼，不阻塞界面
     } else if (reply.text) {
       reply.status = 'aborted' // 吐一半被打断，留半句但不入库
     }
@@ -107,6 +135,35 @@ async function streamReply(reply) {
     scrollToBottom()
   }
   return body
+}
+
+/**
+ * 每聊满 N 条，就顺手提炼一次记忆。用 localStorage 记着上次提炼到的条数，
+ * 避免"切换会话后重挂载"重复提炼同一批。
+ */
+async function maybeDistill() {
+  const count = messages.value.filter((m) => m.status === 'complete').length
+  if (count < (settings.memoryEveryN || 8)) return
+  const markerKey = `distill.${props.sessionId}`
+  const lastDone = Number(localStorage.getItem(markerKey) || 0)
+  if (count <= lastDone || count % (settings.memoryEveryN || 8) !== 0) return
+  if (distilling.value) return
+
+  distilling.value = true
+  try {
+    const chunk = messages.value.slice(-(settings.historyWindow * 2 || 28))
+    const res = await distill(props.character, chunk)
+    if (res) {
+      await applyMemoryUpdates(props.character.id, res.updates)
+      await recordScene(props.sessionId, res.scene)
+      localStorage.setItem(markerKey, String(count))
+      emit('tail')
+    }
+  } catch (err) {
+    console.warn('记忆后台任务出错', err)
+  } finally {
+    distilling.value = false
+  }
 }
 
 async function send() {
@@ -195,6 +252,7 @@ function sessionLabel(s) {
         <span class="hand who-name">{{ character.name }}</span>
       </div>
       <button class="btn ghost new" @click="emit('new')">＋ 新对话</button>
+      <button class="btn ghost new" @click="emit('events')">事件簿</button>
     </header>
 
     <!-- 会话切换条 -->

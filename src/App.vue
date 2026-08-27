@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import Home from './views/Home.vue'
 import CharacterEdit from './views/CharacterEdit.vue'
 import Chat from './views/Chat.vue'
+import EventBook from './views/EventBook.vue'
 import Settings from './views/Settings.vue'
 import { isConfigured } from './lib/settings.js'
 import { useCharacters } from './lib/characters.js'
@@ -101,6 +102,13 @@ function askSettings() {
       @switch="switchSession"
       @new="createSession"
       @tail="refreshCharSessions(activeCharacter.id)"
+      @events="view = 'events'"
+    />
+    <EventBook
+      v-else-if="view === 'events' && activeCharacter && activeSessionId"
+      :session-id="activeSessionId"
+      :character-name="activeCharacter.name"
+      @back="view = 'chat'"
     />
     <Settings v-else-if="view === 'settings'" @done="view = 'home'" />
   </main>
