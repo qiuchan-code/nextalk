@@ -79,11 +79,15 @@ export async function loadMessages(sessionId) {
   return list.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
 }
 
-// 消息序号。每个会话内部自增，跨会话无所谓（排序只在单会话内比）。
-// 计数器放模块级，同一会话内先后创建的消息序号必然递增。
-let seqCounter = 0
+// 消息序号。排序只在单个会话内比，但序号必须"重开后依然单调递增"，
+// 否则刷新页面会把计数器归零，新消息的序号跟旧消息撞车，排序就错位了。
+// 用 localStorage 持久化，并从一个足够大的值（Date.now()）起步：
+// 既让所有新消息都比历史消息大（排前面永远不插队），也保证了跨会话、跨刷新唯一。
+let seqCounter = Number(localStorage.getItem('zhipianren.seq')) || Date.now()
 export function nextSeq() {
-  return seqCounter++
+  const s = seqCounter++
+  localStorage.setItem('zhipianren.seq', String(seqCounter))
+  return s
 }
 
 export function saveMessage(msg) {

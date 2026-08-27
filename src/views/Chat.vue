@@ -335,9 +335,11 @@ async function applyChosen(text) {
 
 // ————— 灵感回复 —————
 
-function onInputFocus() {
-  if (!messages.value.length || busy.value || inspireLoading.value) return
-  if (inspire.value && inspire.value.length) return
+function toggleInspire() {
+  if (inspire.value && inspire.value.length) {
+    inspire.value = null // 收起灵感框
+    return
+  }
   loadInspiration()
 }
 
@@ -391,7 +393,7 @@ function sessionLabel(s) {
 </script>
 
 <template>
-  <div class="chat">
+  <div class="chat" :style="chatBgStyle">
     <header class="chat-head">
       <button class="btn ghost" @click="emit('back')">‹ 回去</button>
       <div class="who">
@@ -414,7 +416,7 @@ function sessionLabel(s) {
       </button>
     </div>
 
-    <div ref="listEl" class="list" :style="chatBgStyle">
+    <div ref="listEl" class="list">
       <div v-if="!messages.length" class="empty">
         <div class="empty-card paper-card">
           <span class="tape green"></span>
@@ -479,13 +481,21 @@ function sessionLabel(s) {
     </div>
 
     <div class="composer">
+      <button
+        class="bulb hand"
+        :class="{ on: !!(inspire && inspire.length) }"
+        :disabled="busy"
+        :title="inspire && inspire.length ? '收起灵感' : '灵感回复'"
+        @click="toggleInspire"
+      >
+        💡
+      </button>
       <textarea
         v-model="draft"
         class="input"
         rows="1"
         :placeholder="`跟 ${character.name} 说点什么…`"
         enterkeyhint="send"
-        @focus="onInputFocus"
         @keydown="onKeydown"
       ></textarea>
       <button v-if="busy" class="btn danger send" @click="stop">停</button>
@@ -542,8 +552,14 @@ function sessionLabel(s) {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 14px;
-  border-bottom: 1.5px dashed var(--line);
+  padding: 8px 12px 7px;
+  /* 半透明毛玻璃，浮在角色大图上，字不糊又保沉浸 */
+  background: rgba(255, 253, 246, 0.55);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.35);
+  position: relative;
+  z-index: 3;
 }
 .btn.ghost {
   border-color: transparent;
@@ -576,8 +592,11 @@ function sessionLabel(s) {
   flex: none;
   display: flex;
   gap: 7px;
-  padding: 8px 14px 4px;
+  padding: 8px 12px 4px;
   overflow-x: auto;
+  background: rgba(255, 253, 246, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 .session-chip {
   flex: none;
@@ -733,7 +752,7 @@ function sessionLabel(s) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin: 0 14px 6px;
+  margin: 0 10px 6px;
   padding: 10px 12px;
   transform: rotate(-0.4deg);
   border: 1.5px solid rgba(194, 85, 77, 0.45);
@@ -754,11 +773,13 @@ function sessionLabel(s) {
 /* 灵感 */
 .inspire {
   flex: none;
-  margin: 0 14px 6px;
+  margin: 0 10px 6px;
   padding: 10px 12px;
-  background: var(--paper-card);
-  border: 1.5px dashed var(--line);
-  border-radius: 3px;
+  background: rgba(255, 253, 246, 0.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1.5px dashed var(--ink-pencil);
+  border-radius: 14px;
   box-shadow: var(--shadow-card);
 }
 .inspire-head {
@@ -813,11 +834,43 @@ function sessionLabel(s) {
   flex: none;
   display: flex;
   align-items: flex-end;
-  gap: 9px;
-  padding: 10px 14px;
-  padding-bottom: calc(10px + env(safe-area-inset-bottom));
-  border-top: 1.5px solid var(--line);
+  gap: 8px;
+  margin: 0 10px;
+  margin-bottom: calc(10px + env(safe-area-inset-bottom));
+  padding: 7px 8px 7px 12px;
   background: rgba(255, 253, 246, 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 22px;
+  box-shadow: var(--shadow-card);
+  position: relative;
+  z-index: 3;
+}
+/* 灯泡：灵感回复开关 */
+.bulb {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  font-size: 19px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  background: rgba(253, 243, 200, 0.85);
+  border: 1px solid rgba(176, 146, 76, 0.45);
+  cursor: pointer;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 0.1s;
+}
+.bulb.on {
+  background: #fce9a8;
+  border-color: var(--ink);
+  box-shadow: 0 0 0 2px var(--ink), var(--shadow-card);
+}
+.bulb:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .input {
   flex: 1;
