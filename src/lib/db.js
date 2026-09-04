@@ -32,6 +32,10 @@ function openDB() {
     // 每个 store 都写成"不存在才建"，这样旧版本升级时能补上缺失的表。
     req.onupgradeneeded = (e) => {
       const db = e.target.result
+      // 升级期间只有 e.target.transaction 这个"升级事务"可用：
+      // 再开新事务（db.transaction(...)）会抛 InvalidStateError，整个升级失败。
+      // 教训：v3 加 groupId 索引这么写，导致老用户升级后永远"翻开中"。
+      const upgradeTx = e.target.transaction
 
       if (!db.objectStoreNames.contains(STORES.characters)) {
         db.createObjectStore(STORES.characters, { keyPath: 'id' })
@@ -58,13 +62,17 @@ function openDB() {
       }
       // v3：群聊的会话也要能被"按房间"找到，老库的 sessions 补一个 groupId 索引
       if (db.objectStoreNames.contains(STORES.sessions)) {
-        const s = db.transaction(STORES.sessions).objectStore(STORES.sessions)
+        const s = upgradeTx.objectStore(STORES.sessions)
         if (!s.indexNames.contains('groupId')) s.createIndex('groupId', 'groupId')
       }
     }
 
     req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
+    req.onerror = () => {
+      // 打开失败时清掉缓存，下次调用还能重试；否则一次失败会把整个页面焊死
+      dbPromise = null
+      reject(req.error)
+    }
   })
 
   return dbPromise

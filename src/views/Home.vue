@@ -12,10 +12,19 @@ const chars = useCharacters()
 const groups = useGroups()
 const menuFor = ref('') // 当前展开菜单的角色 id
 const menuGroupFor = ref('') // 当前展开菜单的房间 id
+// 加载失败时给个看得见的原因，而不是永远"翻开中"
+const loadError = ref('')
 onMounted(() => {
-  chars.reload()
-  groups.reload()
+  reloadAll()
 })
+
+function reloadAll() {
+  loadError.value = ''
+  chars.reload().catch((err) => {
+    loadError.value = String(err?.message || err)
+  })
+  groups.reload().catch(() => {})
+}
 
 function toggleMenu(id) {
   menuFor.value = menuFor.value === id ? '' : id
@@ -92,6 +101,15 @@ function tilt(name) {
         <p class="hand big">还没有角色</p>
         <p class="note">先捏一个，设定它的名字、性格和背景，让它开始跟你说话。</p>
         <button class="btn primary start" @click="emit('create')">去捏第一个</button>
+      </div>
+    </div>
+
+    <div v-else-if="loadError" class="empty">
+      <div class="paper-card empty-card">
+        <span class="tape pink"></span>
+        <p class="hand big">打不开了</p>
+        <p class="note">{{ loadError }}</p>
+        <button class="btn primary start" @click="reloadAll">再试一次</button>
       </div>
     </div>
 
