@@ -158,13 +158,16 @@ async function save() {
 
         <!-- 亲密度：可选开关。勾了才按滑块设置，不勾保持老行为 -->
         <div class="trait affinity">
-          <div class="trait-head">
+          <!-- 开关单独一行：跟滑块挤一行，手机上滑块会被压没了拖不动 -->
+          <div class="aff-top">
             <span class="hand trait-name">亲密度</span>
             <label class="aff-toggle hand">
               <input type="checkbox" v-model="affEnabled" />
               <span>{{ isEdit ? '手动调整' : '设置初始值' }}</span>
             </label>
-            <template v-if="affEnabled">
+          </div>
+          <template v-if="affEnabled">
+            <div class="trait-head aff-slider-row">
               <span class="note trait-desc">{{ affinityLevel(char.affinity) }}</span>
               <input
                 v-model.number="char.affinity"
@@ -175,11 +178,11 @@ async function save() {
                 step="1"
               />
               <span class="note trait-desc">{{ Math.round(char.affinity || 0) }}</span>
-            </template>
-          </div>
-          <div v-if="affEnabled" class="bar">
-            <div class="fill fill-aff" :style="{ width: (char.affinity / 100) * 100 + '%' }"></div>
-          </div>
+            </div>
+            <div class="bar">
+              <div class="fill fill-aff" :style="{ width: (char.affinity / 100) * 100 + '%' }"></div>
+            </div>
+          </template>
           <p class="note hint-aff">
             <template v-if="affEnabled">
               {{ isEdit
@@ -318,6 +321,8 @@ async function save() {
   min-width: 0;
   accent-color: #c9a55a;
   margin: 0 4px;
+  /* 手机端拖拽护甲：不让页面滚动手势把滑块拖拽抢走（iOS 常有这毛病） */
+  touch-action: none;
 }
 .bar {
   height: 4px;
@@ -337,6 +342,13 @@ async function save() {
 }
 .trait.affinity {
   margin-top: 22px;
+}
+.aff-top {
+  display: flex;
+  align-items: center;
+}
+.aff-slider-row {
+  margin-top: 8px;
 }
 .hint-aff {
   margin: 8px 0 0;
