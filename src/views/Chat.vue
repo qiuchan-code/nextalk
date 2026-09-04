@@ -73,12 +73,12 @@ onUnmounted(() => {
   clearTimeout(affTimer)
 })
 
-/** 读当前亲密度；pulse=true 时数值变了就飘一个 +N/-N */
+/** 读当前亲密度；没有记忆就显示空（=老版本，直到提炼自然长出亲密度） */
 async function refreshAffinity({ pulse = false } = {}) {
   const before = affinity.value
   const v = await getAffinity(props.character.id)
-  affinity.value = v ?? props.character.affinity ?? 50
-  if (pulse && before != null && affinity.value !== before) {
+  affinity.value = v // 没设置过/没提炼过 → null → 顶栏不显示♥
+  if (pulse && before != null && affinity.value != null && affinity.value !== before) {
     const d = affinity.value - before
     affDelta.value = (d > 0 ? '+' : '') + d
     clearTimeout(affTimer)
@@ -476,11 +476,12 @@ function sessionLabel(s) {
         <span class="hand who-name">{{ character.name }}</span>
       </div>
       <span
+        v-if="affinity != null"
         class="heart hand"
-        :class="{ warm: (affinity ?? 0) >= 45 }"
-        :title="`亲密度 ${affinity ?? '--'}/100 · ${affinityLevel(affinity)}`"
+        :class="{ warm: affinity >= 45 }"
+        :title="`亲密度 ${affinity}/100 · ${affinityLevel(affinity)}`"
       >
-        ♥ {{ affinity ?? '--' }}
+        ♥ {{ affinity }}
         <span v-if="affDelta" class="aff-delta">{{ affDelta }}</span>
       </span>
       <button class="btn ghost new" @click="emit('new')">＋ 新对话</button>

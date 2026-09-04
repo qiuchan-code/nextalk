@@ -16,7 +16,7 @@ export function emptyCharacter() {
     greeting: '',
     styleLines: [],
     traits: { rational: 0.5, humor: 0.5, empathy: 0.6, proactive: 0.5 },
-    affinity: 50, // 初始亲密度：真正生效在保存时写入 relationship 记忆
+    affinity: 50, // 初始亲密度：勾了「设置初始值」才写入 relationship 记忆
     createdAt: Date.now(),
     updatedAt: Date.now()
   }

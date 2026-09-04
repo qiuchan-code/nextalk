@@ -15,6 +15,8 @@ const styleText = ref('')
 const compressBusy = ref(false)
 const loaded = ref(false)
 const isEdit = props.charId // 新建与否在 setup 里定，生命周期里不变
+// 亲密度开关：不勾=保持老行为（不写亲密度、不影响已有角色）
+const affEnabled = ref(false)
 
 const traitMeta = [
   { key: 'rational', name: '理性', high: '讲逻辑', low: '凭感觉' },
@@ -29,8 +31,10 @@ onMounted(async () => {
     if (existing) {
       char.value = existing
       styleText.value = (existing.styleLines || []).join('\n')
-      // 亲密度显示当前值：编辑时别让滑块盖掉已经聊出来的变化
+      // 这个角色已经有亲密度（提炼过的）→ 默认开启滑块方便调整；
+      // 还没有 → 默认关闭，改别的字符绝不碰它，和以前的版本一样
       const aff = await getAffinity(props.charId)
+      affEnabled.value = aff != null
       char.value.affinity = aff ?? char.value.affinity ?? 50
     }
   }
@@ -64,8 +68,10 @@ async function save() {
     .map((s) => s.trim())
     .filter(Boolean)
   await saveCharacter(char.value)
-  // 亲密度落进 relationship 记忆：新角色=初始值，改角色=手动掰回来
-  await setAffinity(char.value.id, char.value.affinity ?? 50)
+  // 只有勾了才写亲密度；不勾=和老版本行为完全一致，不会惊动已有的角色
+  if (affEnabled.value) {
+    await setAffinity(char.value.id, char.value.affinity ?? 50)
+  }
   emit('save')
 }
 </script>
@@ -150,25 +156,42 @@ async function save() {
           </div>
         </div>
 
-        <!-- 亲密度：初始值和手动调整都在这 -->
+        <!-- 亲密度：可选开关。勾了才按滑块设置，不勾保持老行为 -->
         <div class="trait affinity">
           <div class="trait-head">
             <span class="hand trait-name">亲密度</span>
-            <span class="note trait-desc">{{ affinityLevel(char.affinity) }}</span>
-            <input
-              v-model.number="char.affinity"
-              class="slider"
-              type="range"
-              min="0"
-              max="100"
-              step="1"
-            />
-            <span class="note trait-desc">{{ Math.round(char.affinity || 0) }}</span>
+            <label class="aff-toggle hand">
+              <input type="checkbox" v-model="affEnabled" />
+              <span>{{ isEdit ? '手动调整' : '设置初始值' }}</span>
+            </label>
+            <template v-if="affEnabled">
+              <span class="note trait-desc">{{ affinityLevel(char.affinity) }}</span>
+              <input
+                v-model.number="char.affinity"
+                class="slider"
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+              />
+              <span class="note trait-desc">{{ Math.round(char.affinity || 0) }}</span>
+            </template>
           </div>
-          <div class="bar">
+          <div v-if="affEnabled" class="bar">
             <div class="fill fill-aff" :style="{ width: (char.affinity / 100) * 100 + '%' }"></div>
           </div>
-          <p class="note hint-aff">0 陌生 → 100 交心。先定它们相遇时的亲近程度；之后聊天会自然变化，想掰回来，回来改这个。</p>
+          <p class="note hint-aff">
+            <template v-if="affEnabled">
+              {{ isEdit
+                ? '改后保存即生效；之后聊天还会自然变化，想掰回来再回这儿改。'
+                : '0 陌生 → 100 交心。固定它们的相遇开局，之后聊天会自然变化。' }}
+            </template>
+            <template v-else>
+              {{ isEdit
+                ? '不调整＝保持现状，这次改动不影响它已积累的亲密度。'
+                : '不设置＝和以前一样：从默认之起步，靠聊天自己长出来。想固定开局，勾上「设置初始值」。' }}
+            </template>
+          </p>
         </div>
       </div>
 
@@ -319,6 +342,22 @@ async function save() {
   margin: 8px 0 0;
   font-size: 13px;
   line-height: 1.6;
+}
+.aff-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  background: var(--paper-card);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 2px 9px;
+  margin-left: auto;
+}
+.aff-toggle input {
+  accent-color: #c9a55a;
 }
 
 .actions {
