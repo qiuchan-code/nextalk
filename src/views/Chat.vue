@@ -2,7 +2,7 @@
 import { ref, nextTick, computed, onMounted, onUnmounted } from 'vue'
 import { settings } from '../lib/settings.js'
 import { streamChat, extractJSON } from '../lib/client.js'
-import { buildSystemPrompt, traitsToSampling } from '../lib/prompt.js'
+import { buildSystemPrompt, traitsToSampling, affinityLevel } from '../lib/prompt.js'
 import { loadMessages, saveMessage, nextSeq } from '../lib/sessions.js'
 import { newId, removeMany, STORES } from '../lib/db.js'
 import {
@@ -11,7 +11,8 @@ import {
   distill,
   applyMemoryUpdates,
   recordScene,
-  loadEvents
+  loadEvents,
+  getAffinity
 } from '../lib/memory.js'
 import { alternateReplies, inspireRepliesStream } from '../lib/suggest.js'
 
@@ -37,6 +38,10 @@ const retry = ref(null) // { targetId, options:[{text,editing,draft}], loading, 
 // 灵感回复
 const inspire = ref(null) // string[] | null
 const inspireLoading = ref(false)
+// 亲密度（relationship 记忆里的那个，提炼时会变）
+const affinity = ref(null)
+const affDelta = ref('') // 刚变化的 +N/-N，飘一会儿就消失
+let affTimer = null
 
 let controller = null
 let pressTimer = null
@@ -59,12 +64,27 @@ const chatBgStyle = computed(() => {
 
 onMounted(() => {
   loadMsgs()
+  refreshAffinity()
   window.visualViewport?.addEventListener('resize', onViewportResize)
 })
 onUnmounted(() => {
   window.visualViewport?.removeEventListener('resize', onViewportResize)
   clearPress()
+  clearTimeout(affTimer)
 })
+
+/** 读当前亲密度；pulse=true 时数值变了就飘一个 +N/-N */
+async function refreshAffinity({ pulse = false } = {}) {
+  const before = affinity.value
+  const v = await getAffinity(props.character.id)
+  affinity.value = v ?? props.character.affinity ?? 50
+  if (pulse && before != null && affinity.value !== before) {
+    const d = affinity.value - before
+    affDelta.value = (d > 0 ? '+' : '') + d
+    clearTimeout(affTimer)
+    affTimer = setTimeout(() => (affDelta.value = ''), 2600)
+  }
+}
 
 function onViewportResize() {
   const input = document.activeElement
@@ -204,6 +224,7 @@ async function maybeDistill() {
     if (res) {
       await applyMemoryUpdates(props.character.id, res.updates)
       await recordScene(props.sessionId, res.scene)
+      await refreshAffinity({ pulse: true }) // 提炼改了亲密度，顶栏的♥跟着动
       localStorage.setItem(markerKey, String(count))
       emit('tail')
     }
@@ -454,6 +475,14 @@ function sessionLabel(s) {
         <img v-if="character.avatar" :src="character.avatar" class="mini" alt="" />
         <span class="hand who-name">{{ character.name }}</span>
       </div>
+      <span
+        class="heart hand"
+        :class="{ warm: (affinity ?? 0) >= 45 }"
+        :title="`亲密度 ${affinity ?? '--'}/100 · ${affinityLevel(affinity)}`"
+      >
+        ♥ {{ affinity ?? '--' }}
+        <span v-if="affDelta" class="aff-delta">{{ affDelta }}</span>
+      </span>
       <button class="btn ghost new" @click="emit('new')">＋ 新对话</button>
       <button class="btn ghost new" @click="emit('events')">事件簿</button>
     </header>
@@ -641,6 +670,37 @@ function sessionLabel(s) {
   display: flex;
   align-items: center;
   gap: 7px;
+}
+/* 亲密度小标签：实时显示，提炼更新时飘一个 +N */
+.heart {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  background: rgba(255, 253, 246, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 11px;
+  padding: 3px 8px 3px 9px;
+  position: relative;
+}
+.heart.warm {
+  color: #a85a44;
+}
+.aff-delta {
+  position: absolute;
+  right: -4px;
+  top: -10px;
+  font-size: 12px;
+  color: var(--ink-red);
+  animation: affPop 2.6s ease both;
+}
+@keyframes affPop {
+  0% { opacity: 0; transform: translateY(3px); }
+  15% { opacity: 1; }
+  70% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-5px); }
 }
 .mini {
   width: 30px;

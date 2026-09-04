@@ -1,6 +1,8 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useCharacters, emptyCharacter, compressAvatar } from '../lib/characters.js'
+import { getAffinity, setAffinity } from '../lib/memory.js'
+import { affinityLevel } from '../lib/prompt.js'
 
 const props = defineProps({
   charId: { type: String, default: '' } // 传入就是编辑，空就是新建
@@ -27,6 +29,9 @@ onMounted(async () => {
     if (existing) {
       char.value = existing
       styleText.value = (existing.styleLines || []).join('\n')
+      // 亲密度显示当前值：编辑时别让滑块盖掉已经聊出来的变化
+      const aff = await getAffinity(props.charId)
+      char.value.affinity = aff ?? char.value.affinity ?? 50
     }
   }
   loaded.value = true
@@ -59,6 +64,8 @@ async function save() {
     .map((s) => s.trim())
     .filter(Boolean)
   await saveCharacter(char.value)
+  // 亲密度落进 relationship 记忆：新角色=初始值，改角色=手动掰回来
+  await setAffinity(char.value.id, char.value.affinity ?? 50)
   emit('save')
 }
 </script>
@@ -141,6 +148,27 @@ async function save() {
           <div class="bar">
             <div class="fill" :style="{ width: char.traits[t.key] * 100 + '%' }"></div>
           </div>
+        </div>
+
+        <!-- 亲密度：初始值和手动调整都在这 -->
+        <div class="trait affinity">
+          <div class="trait-head">
+            <span class="hand trait-name">亲密度</span>
+            <span class="note trait-desc">{{ affinityLevel(char.affinity) }}</span>
+            <input
+              v-model.number="char.affinity"
+              class="slider"
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+            />
+            <span class="note trait-desc">{{ Math.round(char.affinity || 0) }}</span>
+          </div>
+          <div class="bar">
+            <div class="fill fill-aff" :style="{ width: (char.affinity / 100) * 100 + '%' }"></div>
+          </div>
+          <p class="note hint-aff">0 陌生 → 100 交心。先定它们相遇时的亲近程度；之后聊天会自然变化，想掰回来，回来改这个。</p>
         </div>
       </div>
 
@@ -280,6 +308,17 @@ async function save() {
   background: rgba(201, 165, 90, 0.6);
   border-radius: 2px;
   transition: width 0.1s;
+}
+.fill-aff {
+  background: rgba(214, 118, 96, 0.55); /* 亲密度用暖一点的颜色，跟性格的土黄区分开 */
+}
+.trait.affinity {
+  margin-top: 22px;
+}
+.hint-aff {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .actions {

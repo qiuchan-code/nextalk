@@ -87,6 +87,12 @@ export function traitsToInstructions(traits = DEFAULT_TRAITS) {
 
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v))
 
+/** 亲密度 0~100 → 关系档位。prompt、界面显示共用这一套档位 */
+export function affinityLevel(v) {
+  const n = Number(v) || 0
+  return n >= 75 ? '很亲近' : n >= 45 ? '还算熟' : n >= 20 ? '刚认识不久' : '还很生疏'
+}
+
 /**
  * 性格 → 采样参数。
  * 幽默和主动让它更放得开（温度高），理性把它往回拉（温度低）。
@@ -142,7 +148,7 @@ export function buildSystemPrompt(character, { memories = [], events = [], userN
     parts.push(`【你们之间发生过的事】\n` + pastEvents.map((m) => '- ' + m.text).join('\n'))
   }
   if (rel) {
-    const level = rel.affinity >= 75 ? '很亲近' : rel.affinity >= 45 ? '还算熟' : rel.affinity >= 20 ? '刚认识不久' : '还很生疏'
+    const level = affinityLevel(rel.affinity)
     parts.push(
       `【你对 ta 的感觉】\n目前你们${level}（亲密度 ${Math.round(rel.affinity ?? 0)}/100）。${rel.text || ''}\n` +
         `说话的亲近程度要match这个关系，别一上来就过分热络，也别对熟人客套。`

@@ -110,6 +110,41 @@ ${transcript}`
   }
 }
 
+// ---------- 亲密度 ----------
+
+/** 读当前亲密度（0~100）。还没有 relationship 记忆时返回 null */
+export async function getAffinity(charId) {
+  const all = await loadMemories(charId)
+  const rel = all.find((m) => m.layer === 'relationship')
+  return rel ? Math.round(rel.affinity ?? BASE_AFFINITY) : null
+}
+
+/**
+ * 手动设置亲密度：捏角色时的"初始值"和之后想掰回来都用它。
+ * 没有 relationship 记忆就先建一条（没提炼过的角色也可以设置初始亲密度）。
+ */
+export async function setAffinity(charId, value) {
+  const v = Math.max(0, Math.min(100, Math.round(Number(value) || 0)))
+  const all = await loadMemories(charId)
+  let rel = all.find((m) => m.layer === 'relationship')
+  if (!rel) {
+    rel = {
+      id: newId('mem-'),
+      charId,
+      layer: 'relationship',
+      text: '',
+      importance: 0.8,
+      createdAt: Date.now(),
+      lastReinforcedAt: Date.now(),
+      affinity: v
+    }
+  } else {
+    rel.affinity = v
+    rel.lastReinforcedAt = Date.now()
+  }
+  await put(STORES.memories, rel)
+}
+
 // ---------- 落库 ----------
 
 async function upsertMemory(charId, layer, { text, importance = 0.5, valence }) {
