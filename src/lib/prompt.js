@@ -170,3 +170,54 @@ export function buildSystemPrompt(character, { memories = [], events = [], userN
 
   return parts.join('\n\n')
 }
+
+/**
+ * 角色速写：给"在场的人"用的一句话小档案。
+ * 只取最抓人的部分（背景开头一句 + 一句说话例子），不塞全文，避免串人设。
+ */
+export function characterSnapshot(c) {
+  const bits = []
+  const back = (c.backstory || '').trim()
+  if (back) {
+    const first = back
+      .split(/[。！？!?\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean)[0]
+    if (first) bits.push(first.slice(0, 60))
+  }
+  const style = (c.styleLines || []).find((s) => s && s.trim())
+  if (style) bits.push(`说话带着「${style.trim().slice(0, 30)}」那种味儿`)
+  return `${c.name}：${bits.join('；') || '一个神秘的角色'}`
+}
+
+/**
+ * 群聊 system prompt：说话的主角给全（人设+记忆都塞），
+ * 其他群成员只给一句速写——既防"替别人说话"，也让 TA 认得谁是谁。
+ */
+export function buildGroupSystemPrompt(
+  speaker,
+  { group = {}, members = [], memories = [], events = [], userName = '' } = {}
+) {
+  const parts = [buildSystemPrompt(speaker, { memories, events, userName })]
+  const others = members.filter((m) => m.id !== speaker.id)
+
+  if (group.desc?.trim()) {
+    parts.push(`【这个群】\n你们在「${group.name}」的群里：${group.desc.trim()}`)
+  } else {
+    parts.push(`【这个群】\n你们在「${group.name}」的群里，大家都是群成员。`)
+  }
+
+  if (others.length) {
+    parts.push(`【在场的人】\n` + others.map(characterSnapshot).join('\n'))
+  }
+
+  parts.push(
+    `【群聊规则】\n` +
+      `- 你发的话，是发到群里的消息，群里的每个人都能看到\n` +
+      `- 接话：可以对用户说，也可以接别人的话（叫名字、回嘴、打趣都行）\n` +
+      `- 别替别人说话，别人的台词一律不要抢\n` +
+      `- 一次一两句，让对话像一群真人轮流说话的样子`
+  )
+
+  return parts.join('\n\n')
+}

@@ -9,14 +9,15 @@
  */
 
 const DB_NAME = 'zhipianren'
-const DB_VERSION = 2
+const DB_VERSION = 3
 
 export const STORES = {
   characters: 'characters',
   sessions: 'sessions',
   messages: 'messages',
   memories: 'memories',
-  events: 'events'
+  events: 'events',
+  groups: 'groups'
 }
 
 let dbPromise = null
@@ -50,6 +51,15 @@ function openDB() {
       if (!db.objectStoreNames.contains(STORES.events)) {
         const s = db.createObjectStore(STORES.events, { keyPath: 'id' })
         s.createIndex('sessionId', 'sessionId')
+      }
+      if (!db.objectStoreNames.contains(STORES.groups)) {
+        const s = db.createObjectStore(STORES.groups, { keyPath: 'id' })
+        s.createIndex('charIds', 'charIds', { multiEntry: true })
+      }
+      // v3：群聊的会话也要能被"按房间"找到，老库的 sessions 补一个 groupId 索引
+      if (db.objectStoreNames.contains(STORES.sessions)) {
+        const s = db.transaction(STORES.sessions).objectStore(STORES.sessions)
+        if (!s.indexNames.contains('groupId')) s.createIndex('groupId', 'groupId')
       }
     }
 

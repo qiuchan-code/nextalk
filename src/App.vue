@@ -5,6 +5,8 @@ import CharacterEdit from './views/CharacterEdit.vue'
 import Chat from './views/Chat.vue'
 import EventBook from './views/EventBook.vue'
 import Settings from './views/Settings.vue'
+import GroupEdit from './views/GroupEdit.vue'
+import GroupChat from './views/GroupChat.vue'
 import { isConfigured } from './lib/settings.js'
 import { useCharacters } from './lib/characters.js'
 import { listSessions, openSession, newSession } from './lib/sessions.js'
@@ -17,6 +19,8 @@ const activeEditId = ref('') // 正在编辑的角色 id，空 = 新建
 // 当前角色的全部会话线，聊天气泡上方做切换
 const charSessions = ref([])
 const chars = useCharacters()
+// 房间：当前打开/编辑的房间 id
+const activeGroupId = ref('')
 
 const subtitle = computed(() => {
   const h = new Date().getHours()
@@ -79,6 +83,34 @@ function editCharacter(id) {
 function askSettings() {
   view.value = 'settings'
 }
+
+// ————— 房间 —————
+
+function openGroup(id) {
+  activeGroupId.value = id
+  view.value = 'group'
+}
+
+function editGroup(id) {
+  activeGroupId.value = id // '' = 新建
+  view.value = 'group-edit'
+}
+
+function savedGroup(id) {
+  if (id) {
+    openGroup(id) // 新建/改完直接进群聊
+  } else {
+    view.value = 'home'
+  }
+}
+
+function backFromGroupEdit() {
+  if (activeGroupId.value) {
+    view.value = 'group'
+  } else {
+    backHome()
+  }
+}
 </script>
 
 <template>
@@ -88,7 +120,11 @@ function askSettings() {
       <span class="note subtitle">{{ subtitle }}</span>
     </div>
     <nav class="nav">
-      <button class="tab hand" :class="{ on: view === 'home' || view === 'chat' }" @click="backHome">
+      <button
+        class="tab hand"
+        :class="{ on: view === 'home' || view === 'chat' || view === 'group' || view === 'group-edit' }"
+        @click="backHome"
+      >
         角色
       </button>
       <button class="tab hand" :class="{ on: view === 'settings' }" @click="askSettings">设置</button>
@@ -102,6 +138,8 @@ function askSettings() {
       @pick="pickCharacter"
       @create="startNew"
       @edit="editCharacter"
+      @pick-group="openGroup"
+      @edit-group="editGroup"
     />
     <CharacterEdit
       v-else-if="view === 'create'"
@@ -127,6 +165,20 @@ function askSettings() {
       :session-id="activeSessionId"
       :character-name="activeCharacter.name"
       @back="view = 'chat'"
+    />
+    <GroupChat
+      v-else-if="view === 'group' && activeGroupId"
+      :key="activeGroupId"
+      :group-id="activeGroupId"
+      @back="backHome"
+      @edit="editGroup(activeGroupId)"
+    />
+    <GroupEdit
+      v-else-if="view === 'group-edit'"
+      :group-id="activeGroupId"
+      :key="activeGroupId || 'new-group'"
+      @save="savedGroup"
+      @cancel="backFromGroupEdit"
     />
     <Settings v-else-if="view === 'settings'" @done="view = 'home'" />
   </main>
